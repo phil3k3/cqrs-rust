@@ -1,5 +1,5 @@
-# bux-cqrs-rust
-A reference implementation of the BUX CQRS library in Rust
+# cqrs-rust
+A reference implementation of the CQRS library in Rust
 
 Stage 1: Event-less Command Server
 

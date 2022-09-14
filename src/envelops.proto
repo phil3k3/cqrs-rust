@@ -4,7 +4,7 @@ package cqrs;
 
 import "google/protobuf/wrappers.proto";
 
-option java_package = "com.getbux.platform.cqrs.protobuf";
+option java_package = "dev.philiplimbeck.cqrs.protobuf";
 option java_outer_classname = "EnvelopesProto";
 option optimize_for = SPEED;
 

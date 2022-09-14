@@ -1,5 +1,5 @@
 [package]
-name = "bux_serde"
+name = "cqrs_rust"
 version = "0.1.0"
 edition = "2021"
 
