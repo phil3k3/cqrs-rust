@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package cqrs;
+
+import "google/protobuf/wrappers.proto";
+
+option java_package = "com.getbux.platform.cqrs.protobuf";
+option java_outer_classname = "EnvelopesProto";
+option optimize_for = SPEED;
+
+message UntypedCommandEnvelopeProto {
+    string id = 1;
+    int64 timestamp = 2;
+    string serviceId = 3;
+    int32 serviceInstanceId = 4;
+    string transactionId = 5;
+
+    int32 version = 6;
+    string type = 7;
+    string subject = 8;
+
+    RequestInfoProto requestInfo = 9;
+    string signature = 10;
+
+    bytes command = 11;
+
+    string privacyKey = 12;
+    string correlationId = 13;
+}
+
+message RequestInfoProto {
+    string userId = 1;
+    string jwtId = 2;
+    string clientId = 3;
+    string sessionId = 4;
+    string userAgent = 5;
+    string endpoint = 6;
+    string ipAddress = 7;
+    // deprecated    bytes requestParameters = 8;
+    map<string, string> requestParameters = 9;
+    string type = 10;
+    string principalId = 11;
+    string principalRole = 12;
+}
+
+message UntypedCommandResponseEnvelopeProto {
+    string transactionId = 1;
+    string commandId = 2;
+    int64 timestamp = 3;
+    string serviceId = 4;
+    string type = 5;
+    int32 version = 6;
+    bytes response = 7;
+    GenericApiErrorProto error = 8;
+    string id = 9;
+}
+
+message GenericApiErrorProto {
+    string message = 1;
+    string developerMessage = 2;
+    string errorCode = 3;
+}
+
+message UntypedDomainEventEnvelopeProto {
+    string id = 1;
+    string transactionId = 2;
+    int64 timestamp = 3;
+    string type = 4;
+    int32 version = 5;
+    StreamInfoProto streamInfo = 6;
+    bytes event = 7;
+    string partitionKey = 8;
+    string privacyKey = 9;
+    string producingServiceId = 10;
+    string producingServiceVersion = 11;
+    google.protobuf.UInt64Value generation = 12;
+    string correlationId = 13;
+}
+
+message StreamInfoProto {
+    string id = 1;
+    string entityType = 2;
+    bool primary = 3;
+}
