@@ -1,4 +1,4 @@
-use cqrs::{CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, Command};
+use cqrs_library::{CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, Command};
 use cqrs_kafka::{KafkaCommandChannel};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,6 @@ fn main() {
         user_id: String::from("Test"),
         name: String::from("Name")
     };
-    command_service_client.send_command(&command, &kafka_command_channel);
+    command_service_client.send_command(&command, &mut kafka_command_channel);
 
 }

@@ -1,4 +1,4 @@
-use cqrs;
+use cqrs_library;
 
 
 fn main() {
