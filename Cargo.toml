@@ -19,3 +19,21 @@ log = "0.4.17"
 
 [build-dependencies]
 prost-build = "0.9"
+
+[[bin]]
+name = "cqrs-example-server"
+test = false
+bench = false
+
+[[bin]]
+name = "cqrs-example-client"
+test = false
+bench = false
+
+[kafka]
+name = "cqrs_kafka"
+path = "src/cqrs_kafka.rs"
+
+[lib]
+name = "cqrs"
+path = "src/cqrs.rs"
