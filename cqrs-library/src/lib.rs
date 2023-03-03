@@ -87,7 +87,7 @@ impl<'a> CommandAccessor<'a> {
 }
 
 pub trait OutboundChannel {
-    fn send(&mut self, message: Vec<u8>);
+    fn send(&mut self, key: Vec<u8>, message: Vec<u8>);
 }
 
 pub trait InboundChannel {
@@ -111,7 +111,7 @@ impl<'a> CommandServiceClient {
     pub fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
-        command_channel.send(serialized_command.0);
+        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
     }
 
     pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> CommandResponse {
@@ -146,7 +146,7 @@ impl<'a> CommandServiceServer<'a> {
                         error!("No command response")
                     }
                     Some(command_response) => {
-                        command_response_channel.send(command_response)
+                        command_response_channel.send("".as_bytes().to_vec(), command_response)
                     }
                 }
             }
@@ -283,7 +283,7 @@ mod tests {
     }
 
     impl OutboundChannel for CapturingChannel {
-        fn send(&mut self, command: Vec<u8>) {
+        fn send(&mut self, _key: Vec<u8>, command: Vec<u8>) {
             debug!("Adding message");
             self.messages.push(command);
         }
