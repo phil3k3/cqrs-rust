@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 cqrs-library = { path = "../cqrs-library" }
 rdkafka = { version = "0.25", features = ["cmake-build"] }
+log = "0.4.8"
+
+
+[dev-dependencies]
+testcontainers = "0.14.0"
