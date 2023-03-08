@@ -1,9 +1,12 @@
+use std::fmt::Display;
+use std::thread;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance};
 use rdkafka::error::{KafkaError, KafkaResult};
-use rdkafka::message::DeliveryResult;
+use rdkafka::message::{BorrowedMessage, DeliveryResult};
 use rdkafka::producer::{BaseRecord, ProducerContext, ThreadedProducer};
 use cqrs_library::{InboundChannel, OutboundChannel};
 use log::{info};
@@ -122,20 +125,33 @@ fn create_consumer(bootstrap_server: String, service_id: String) -> Result<Loggi
 
 impl InboundChannel for KafkaInboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>> {
-        let message = self.consumer.poll(Duration::from_secs(30));
-        return message.map(|x| x.expect("Could not read message").payload().unwrap().to_vec())
+        return self.consumer.poll(Duration::from_secs(1)).and_then(|x| match x {
+                Ok(t) => t.payload().and_then(|y| Some(y.to_vec())),
+                Err(_v) => None
+            }
+        );
     }
 }
 
-struct Runtime {
-
+struct Runtime<TARGET> {
+    handle: JoinHandle<TARGET>
 }
+
+impl<TARGET:Send + 'static> Runtime<TARGET> {
+    fn start<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> Self  {
+        return Runtime {
+            handle: thread::spawn(f)
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
     use testcontainers::{clients, images::kafka};
     use cqrs_library::{InboundChannel, OutboundChannel};
-    use crate::{KafkaInboundChannel, KafkaOutboundChannel};
+    use crate::{KafkaInboundChannel, KafkaOutboundChannel, Runtime};
 
     #[test]
     fn test_sync_send_receive() {
@@ -154,7 +170,16 @@ mod tests {
 
         let mut inbound_channel = KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers);
 
-        let message = inbound_channel.consume().expect("Message not received");
+
+        let mut runtime = Runtime::start(|| {
+            loop {
+                let message = inbound_channel.consume();
+                if (message.is_some()) {
+                    break;
+                }
+            }
+        });
+
 
         assert_eq!("MESSAGE", String::from_utf8(message).unwrap());
     }
