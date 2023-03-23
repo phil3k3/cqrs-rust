@@ -1,16 +1,14 @@
-use std::fmt::Display;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use blockingqueue::BlockingQueue;
 use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance};
 use rdkafka::error::{KafkaError, KafkaResult};
-use rdkafka::message::{BorrowedMessage, DeliveryResult};
+use rdkafka::message::{DeliveryResult};
 use rdkafka::producer::{BaseRecord, Producer, ProducerContext, ThreadedProducer};
 use cqrs_library::{InboundChannel, OutboundChannel};
-use log::{info};
+use log::{error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 
 
@@ -63,11 +61,11 @@ impl ProducerContext for ProducerCallbackLogger {
         match unwrapped_result {
             Ok(msg) => {
                 let key : &str = msg.key_view().unwrap().unwrap();
-                println!("Produced message with key {} in offset {} and partition {}", key, msg.offset(), msg.partition());
+                info!("Produced message with key {} in offset {} and partition {}", key, msg.offset(), msg.partition());
             }
             Err(producer_error) => {
                 let key : &str = producer_error.1.key_view().unwrap().unwrap();
-                println!("Failed to produce message with key {}: {}", key, producer_error.0);
+                error!("Failed to produce message with key {}: {}", key, producer_error.0);
             }
         }
     }
@@ -77,7 +75,8 @@ fn create_producer(bootstrap_server: String, service_id: &str) -> Result<Threade
     let mut config = ClientConfig::new();
     config
         .set("bootstrap.servers", bootstrap_server)
-        .set("message.timeout.ms", "5000");
+        .set("message.timeout.ms", "5000")
+        .set("debug", "broker,topic,msg");
     config.set_log_level(RDKafkaLogLevel::Debug);
     config.create_with_context(ProducerCallbackLogger {})
 }
@@ -119,6 +118,7 @@ impl OutboundChannel for KafkaOutboundChannel {
                 .key(&key)
                 .payload(&message))
             .expect("Failed to send message");
+        self.producer.flush(Duration::from_secs(60));
     }
 }
 
@@ -139,7 +139,9 @@ fn create_consumer(bootstrap_server: String, service_id: String) -> Result<Loggi
         .set("bootstrap.servers", &bootstrap_server)
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "true")
-        .set("auto.offset.reset", "earliest");
+        .set("isolation.level", "read_uncommitted")
+        .set("auto.offset.reset", "earliest")
+        .set("debug", "consumer,cgrp,topic,fetch");
 
    // all nodes of the same service are in a group and will get some partitions assigned
     config.set_log_level(RDKafkaLogLevel::Debug);
@@ -193,33 +195,32 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::channel;
-    use std::{io, thread};
-    use std::io::Write;
-    use std::thread::sleep;
-    use std::time::Duration;
-    use blockingqueue::BlockingQueue;
+    use std::{thread};
     use log::info;
-    use rdkafka::admin::AdminClient;
     use testcontainers::{clients, images::kafka};
     use cqrs_library::{InboundChannel, OutboundChannel};
     use crate::{KafkaInboundChannel, KafkaOutboundChannel, Runtime};
 
+
+
     #[tokio::test]
     async fn test_sync_send_receive() {
 
-        println!("Starting transmission test via Kafka");
+        env_logger::init();
+
+        info!("Starting transmission test via Kafka");
 
         let docker = clients::Cli::default();
         let kafka_node = docker.run(kafka::Kafka::default());
 
-        println!("Started Kafka container");
+        info!("Started Kafka container");
 
         let bootstrap_servers = format!(
             "127.0.0.1:{}",
             kafka_node.get_host_port_ipv4(kafka::KAFKA_PORT)
         );
 
-        println!("{}", bootstrap_servers);
+        info!("{}", bootstrap_servers);
         let mut outbound_channel = KafkaOutboundChannel::new("TEST_OUT", "TEST", &bootstrap_servers);
 
         outbound_channel.create_topic("TEST").await;
@@ -232,18 +233,19 @@ mod tests {
             outbound_channel.send("KEY".as_bytes().to_vec(), "MESSAGE".as_bytes().to_vec());
         });
 
-        println!("Waiting for sender");
+        info!("Waiting for sender");
         sender.join().expect("The sender thread has panicked");
-        println!("Message sent");
+        info!("Message sent");
 
         let receiver = Runtime::start(move || {
             loop {
-                println!("Waiting for message");
+                info!("Waiting for message");
                 let message = inbound_channel.consume();
                 match message {
                     Some(content) => {
-                        println!("Received message");
-                        assert_eq!("MESSAGE", String::from_utf8(content).unwrap());
+                        let string = String::from_utf8(content).unwrap();
+                        info!("Received message {}", &string);
+                        assert_eq!("MESSAGE", string);
                         break;
                     }
                     _ => {}
@@ -251,14 +253,14 @@ mod tests {
             }
         });
 
-        println!("Waiting for receiver");
-        sleep(Duration::from_secs(60));
+        info!("Waiting for receiver");
+        receiver.join().expect("The receiver thread has panicked");
     }
 
     #[test]
     fn test_channel() {
 
-        println!("Starting test via Kafka");
+        info!("Starting test via Kafka");
 
         let (tx, rx) = channel();
 
@@ -269,7 +271,7 @@ mod tests {
 
         let receiver = thread::spawn(move || {
             let value = rx.recv().expect("Unable to receive from channel");
-            println!("{}", value);
+            info!("{}", value);
         });
 
         sender.join().expect("The sender 2 thread has panicked");
