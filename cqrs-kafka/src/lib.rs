@@ -100,13 +100,16 @@ impl KafkaOutboundChannel {
     }
 
     pub async fn create_topic(&self, topic: &str) {
-        self.admin_client
+        let result = self.admin_client
             .create_topics(
                 &[NewTopic::new(topic, 1, TopicReplication::Fixed(1))],
                 &AdminOptions::new(),
             )
-            .await
-            .unwrap();
+            .await;
+        match result {
+            Ok(_result) => info!("Topic {} created", topic),
+            Err(error) => error!("Error creating topic {}: {}", topic, error)
+        }
     }
 }
 
@@ -118,6 +121,9 @@ impl OutboundChannel for KafkaOutboundChannel {
                 .key(&key)
                 .payload(&message))
             .expect("Failed to send message");
+        for _ in 0..10 {
+            self.producer.poll(Duration::from_millis(100));
+        }
         self.producer.flush(Duration::from_secs(60));
     }
 }
@@ -158,12 +164,13 @@ impl InboundChannel for KafkaInboundChannel {
     }
 }
 
-struct Runtime<TARGET> {
+pub struct Runtime<TARGET> {
     handle: JoinHandle<TARGET>
+
 }
 
 impl<TARGET:Send + 'static> Runtime<TARGET> {
-    fn start<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> JoinHandle<TARGET>  {
+    pub fn new<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> JoinHandle<TARGET>  {
         thread::spawn(f)
     }
 }
@@ -237,7 +244,7 @@ mod tests {
         sender.join().expect("The sender thread has panicked");
         info!("Message sent");
 
-        let receiver = Runtime::start(move || {
+        let receiver = Runtime::new(move || {
             loop {
                 info!("Waiting for message");
                 let message = inbound_channel.consume();
@@ -274,7 +281,7 @@ mod tests {
             info!("{}", value);
         });
 
-        sender.join().expect("The sender 2 thread has panicked");
+        sender.join().expect("The sender thread has panicked");
         receiver.join().expect("The receiver thread has panicked");
     }
 }

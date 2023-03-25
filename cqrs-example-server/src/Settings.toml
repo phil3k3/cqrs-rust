@@ -1,0 +1,3 @@
+command_topic = "TEST"
+response_topic = "TEST_RESPONSE"
+bootstrap_server = "127.0.0.1:9092"

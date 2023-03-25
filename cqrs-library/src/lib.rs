@@ -5,22 +5,22 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
 use prost::Message;
-use log::{error};
+use log::{debug, error};
 
 pub mod envelope {
     include!(concat!(env!("OUT_DIR"), "/cqrs.rs"));
 }
 
-struct CommandStore {
+pub struct CommandStore {
     command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor) -> CommandResponse>>,
     service_id: String
 }
 
 impl CommandStore {
-    fn new(service_id: &str) -> CommandStore {
+    pub fn new(service_id: &str) -> CommandStore {
         CommandStore { command_handlers: HashMap::new(), service_id: String::from(service_id)}
     }
-    fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor) -> CommandResponse>) {
+    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor) -> CommandResponse>) {
         self.command_handlers.insert(String::from(command), handler);
     }
     fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor) -> Option<CommandServerResult> {
@@ -32,7 +32,7 @@ impl CommandStore {
     }
 }
 
-struct CommandAccessor<'a> {
+pub struct CommandAccessor<'a> {
     serialized_command: &'a Vec<u8>,
     command_id: String,
     command_metadata: Option<CommandMetadata>
@@ -74,7 +74,7 @@ impl<'a> CommandAccessor<'a> {
         CommandAccessor { serialized_command, command_id: command_id, command_metadata: None }
     }
 
-    fn get_command<T: Deserialize<'a> + Command<'a>>(&mut self) -> Box<T> {
+    pub fn get_command<T: Deserialize<'a> + Command<'a>>(&mut self) -> Box<T> {
         let slice = self.serialized_command.as_slice();
         let command = serde_json::from_slice::<T>(slice).unwrap();
         self.command_metadata = Some(CommandMetadata {
@@ -125,7 +125,7 @@ impl<'a> CommandServiceClient {
     }
 }
 
-struct CommandServiceServer<'c> {
+pub struct CommandServiceServer<'c> {
     command_store: &'c CommandStore
 }
 
@@ -138,7 +138,7 @@ impl<'a> CommandServiceServer<'a> {
     pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
         let message = command_channel.consume();
         match message {
-            None => error!("No message"),
+            None => debug!("No message"),
             Some(message) => {
                 let command_response = handle_command(&message, &self.command_store);
                 match command_response {
