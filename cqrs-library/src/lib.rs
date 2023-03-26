@@ -116,7 +116,7 @@ impl<'a> CommandServiceClient {
 
     pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> CommandResponse {
         let serialized_message = command_response_channel.consume().unwrap();
-        let command_response = envelope::UntypedCommandResponseEnvelopeProto::decode(&mut Cursor::new(&serialized_message)).unwrap();
+        let command_response = envelope::CommandResponseEnvelopeProto::decode(&mut Cursor::new(&serialized_message)).unwrap();
         let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response).unwrap();
         if command_response_result.result.eq("Ok") {
             return CommandResponse::Ok
@@ -170,7 +170,7 @@ fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: 
     let serialized_command = serde_json::to_vec(command).unwrap();
     let service_instance_id_i32 = service_instance_id as i32;
     let command_id = String::from(command_id);
-    let command_envelope = envelope::UntypedCommandEnvelopeProto {
+    let command_envelope = envelope::CommandEnvelopeProto {
         id: command_id.to_owned(),
         timestamp: Utc::now().timestamp(),
         service_id,
@@ -179,11 +179,7 @@ fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: 
         r#type: command.get_type().to_owned(),
         version: command.get_version().to_owned(),
         subject: command.get_subject().to_owned(),
-        command: serialized_command.to_vec(),
-        request_info: None,
-        signature: String::from(""),
-        privacy_key: String::from(""),
-        correlation_id: String::from("")
+        command: serialized_command.to_vec()
     };
     (serialize_protobuf(&command_envelope), command_id)
 }
@@ -202,7 +198,7 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
                 result: command_response.to_string()
             };
             let command_response_serialized = serde_json::to_string(&command_response_result).unwrap();
-            let response_envelope = envelope::UntypedCommandResponseEnvelopeProto {
+            let response_envelope = envelope::CommandResponseEnvelopeProto {
                 transaction_id: Uuid::new_v4().to_string(),
                 command_id: String::from(command_id),
                 timestamp: Utc::now().timestamp(),
@@ -227,7 +223,7 @@ fn serialize_protobuf<M: Message+Sized>(envelope: &M) -> Vec<u8> {
 }
 
 fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore) -> Option<Vec<u8>> {
-    let result = envelope::UntypedCommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
+    let result = envelope::CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);
 
