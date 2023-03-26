@@ -22,6 +22,8 @@ impl Command<'_> for CreateUserCommand {
 
 fn main() {
 
+    info!("=== STARTING EXAMPLE CQRS CLIENT ===");
+
     let settings = Config::builder()
         .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
         .build()
@@ -32,7 +34,6 @@ fn main() {
     }
 
     env_logger::init();
-    info!("=== STARTING EXAMPLE CQRS CLIENT ===");
 
     let settings = Config::builder()
         .add_source(config::File::with_name("cqrs-example-client/src/Settings"))

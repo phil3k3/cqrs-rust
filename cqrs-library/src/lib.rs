@@ -131,7 +131,7 @@ pub struct CommandServiceServer<'c> {
 
 impl<'a> CommandServiceServer<'a> {
 
-    pub fn new( command_store: &'a CommandStore) -> Box<CommandServiceServer<'a>> {
+    pub fn new(command_store: &'a CommandStore) -> Box<CommandServiceServer<'a>> {
         Box::new(CommandServiceServer { command_store })
     }
 
@@ -242,13 +242,11 @@ fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore) ->
     }
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 struct CommandResponseResult {
     entity_id: String,
     result: String
 }
-
 
 #[cfg(test)]
 mod tests {

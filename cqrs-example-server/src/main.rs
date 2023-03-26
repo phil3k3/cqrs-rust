@@ -31,17 +31,19 @@ impl Command<'_> for TestCreateUserCommand {
 
 #[tokio::main]
 async fn main() {
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "debug")
-    }
 
-    env_logger::init();
     info!("=== STARTING EXAMPLE CQRS SERVER ===");
 
     let settings = Config::builder()
         .add_source(config::File::with_name("cqrs-example-server/src/Settings"))
         .build()
         .unwrap();
+
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", &settings.get_string("log_level").unwrap())
+    }
+
+    env_logger::init();
 
     let mut command_response_channel = KafkaOutboundChannel::new(
         "COMMAND-SERVER",

@@ -1,9 +1,4 @@
 # cqrs-rust
-A reference implementation of the CQRS library in Rust
 
-Stage 1: Event-less Command Server
+A simple command server written in Rust, it doesn't use any async features yet but that is the next step.
 
-- [x] Draft of a serde module for commands (commands -> json -> protobuf -> json -> command)
-- [ ] Draft of a serde module for command responses
-- [ ] Module for handling Kafka messages and sending responses
-- [ ] Command server example
