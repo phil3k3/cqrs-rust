@@ -114,14 +114,31 @@ impl<'a> CommandServiceClient {
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
     }
 
-    pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> CommandResponse {
-        let serialized_message = command_response_channel.consume().unwrap();
-        let command_response = envelope::CommandResponseEnvelopeProto::decode(&mut Cursor::new(&serialized_message)).unwrap();
-        let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response).unwrap();
-        if command_response_result.result.eq("Ok") {
-            return CommandResponse::Ok
+    pub fn plus_one(x: Option<i32>) -> Option<i32> {
+        match x {
+            None => None,
+            Some(i) => Some(i + 1),
         }
-        CommandResponse::Error
+    }
+
+
+    pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> Option<CommandResponse> {
+        let serialized_message = command_response_channel.consume().unwrap();
+        return match serialized_message {
+            None() => {
+                debug!("No response");
+                None
+            }
+            Some(message) => {
+                let command_response = envelope::CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message)).unwrap();
+                let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response).unwrap();
+                if command_response_result.result.eq("Ok") {
+                    Some(CommandResponse::Ok)
+                } else {
+                    Some(CommandResponse::Error)
+                }
+            }
+        }
     }
 }
 

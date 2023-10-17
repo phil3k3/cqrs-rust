@@ -1,7 +1,7 @@
 use std::env;
 use config::Config;
 use cqrs_library::{CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, Command};
-use cqrs_kafka::{KafkaOutboundChannel};
+use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel};
 use serde::{Deserialize, Serialize};
 use log::info;
 
@@ -44,7 +44,7 @@ fn main() {
 
     let mut kafka_command_channel = KafkaOutboundChannel::new(
         &settings.get_string("service_id").unwrap(),
-        "CQRS-SERVER",
+        &settings.get_string("command_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap()
     );
     let command = CreateUserCommand {
@@ -52,4 +52,21 @@ fn main() {
         name: String::from("Name")
     };
     command_service_client.send_command(&command, &mut kafka_command_channel);
+
+    let kafka_command_response_channel = KafkaInboundChannel::new(
+        &settings.get_string("service_id").unwrap(),
+        &[&settings.get_string("command_response_topic").unwrap()],
+        &settings.get_string("bootstrap_server").unwrap()
+    );
+    info!("Message sent!");
+
+    loop {
+        let response = command_service_client.read_response(&kafka_command_response_channel);
+        match response {
+            None => {}
+            Some(result) => {
+                info!("Command response {}", result);
+            }
+        }
+    }
 }
