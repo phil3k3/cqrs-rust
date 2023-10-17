@@ -123,9 +123,9 @@ impl<'a> CommandServiceClient {
 
 
     pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> Option<CommandResponse> {
-        let serialized_message = command_response_channel.consume().unwrap();
+        let serialized_message = command_response_channel.consume();
         return match serialized_message {
-            None() => {
+            None => {
                 debug!("No response");
                 None
             }

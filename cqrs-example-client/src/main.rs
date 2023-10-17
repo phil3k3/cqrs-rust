@@ -1,4 +1,5 @@
 use std::env;
+use std::process::exit;
 use config::Config;
 use cqrs_library::{CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, Command};
 use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel};
@@ -53,19 +54,20 @@ fn main() {
     };
     command_service_client.send_command(&command, &mut kafka_command_channel);
 
-    let kafka_command_response_channel = KafkaInboundChannel::new(
+    let mut kafka_command_response_channel = KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
-        &[&settings.get_string("command_response_topic").unwrap()],
+        &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap()
     );
     info!("Message sent!");
 
     loop {
-        let response = command_service_client.read_response(&kafka_command_response_channel);
+        let response = command_service_client.read_response(&mut kafka_command_response_channel);
         match response {
             None => {}
             Some(result) => {
                 info!("Command response {}", result);
+                exit(0);
             }
         }
     }
