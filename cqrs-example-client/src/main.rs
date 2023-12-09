@@ -1,7 +1,7 @@
 use std::env;
 use std::process::exit;
 use config::Config;
-use cqrs_library::{CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, Command};
+use cqrs_library::{CommandServiceClient, Command};
 use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel};
 use serde::{Deserialize, Serialize};
 use log::info;

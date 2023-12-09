@@ -1,35 +1,77 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
 use prost::Message;
 use log::{debug, error};
+pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
     include!(concat!(env!("OUT_DIR"), "/cqrs.rs"));
 }
 
+mod messages;
+
 pub struct CommandStore {
-    command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor) -> CommandResponse>>,
+    command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor, &mut EventProducer) -> CommandResponse>>,
     service_id: String
 }
 
-impl CommandStore {
+impl<'a> CommandStore {
     pub fn new(service_id: &str) -> CommandStore {
         CommandStore { command_handlers: HashMap::new(), service_id: String::from(service_id)}
     }
-    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor) -> CommandResponse>) {
+    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor, &mut EventProducer) -> CommandResponse>) {
         self.command_handlers.insert(String::from(command), handler);
     }
-    fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor) -> Option<CommandServerResult> {
-        let command_response = self.command_handlers.get(command_type).unwrap()(command_accessor);
+    fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut EventProducer) -> Option<CommandServerResult> {
+        let command_response = self.command_handlers.get(command_type).unwrap()(command_accessor, event_producer);
         Some(CommandServerResult {
             command_response,
             service_id: self.service_id.to_owned()
         })
     }
+}
+
+pub struct EventProducer {
+    service_id: String
+}
+
+impl<'e> EventProducer {
+
+    pub fn new(service_id: &str) -> EventProducer {
+        EventProducer { service_id: String::from(service_id) }
+    }
+
+    fn convert_event<T: Event<'e>>(&mut self, event: &T) -> Vec<u8> {
+        let event_id = Uuid::new_v4().to_string();
+        let event_serialized = serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str());
+        return event_serialized.0;
+    }
+
+    pub fn produce<'a, T: Event<'e>>(&mut self, event: &T, event_channel: &'a mut (dyn OutboundChannel)) {
+        let event_message = self.convert_event(event);
+        event_channel.send(Vec::from(event.get_id()), event_message);
+    }
+}
+
+fn serialize_event_to_protobuf<'e, T: Event<'e>>(event: &T, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
+    let serialized_event = serde_json::to_vec(event).unwrap();
+    let event_id = String::from(event_id);
+    let event_envelope = envelope::DomainEventEnvelopeProto {
+        id: event_id.to_owned(),
+        timestamp: Utc::now().timestamp(),
+        transaction_id: Uuid::new_v4().to_string(),
+        r#type: event.get_type().to_owned(),
+        version: event.get_version().to_owned(),
+        stream_info: None,
+        event: serialized_event,
+        partition_key: event.get_id(),
+        producing_service_id: service_id.to_owned(),
+        producing_service_version: "1".to_owned(),
+    };
+    (serialize_protobuf(&event_envelope), event_id)
 }
 
 pub struct CommandAccessor<'a> {
@@ -38,35 +80,6 @@ pub struct CommandAccessor<'a> {
     command_metadata: Option<CommandMetadata>
 }
 
-struct CommandMetadata {
-    subject: String,
-    command_type: String,
-    version: i32
-}
-
-struct CommandServerResult {
-    command_response: CommandResponse,
-    service_id: String,
-}
-
-#[derive(PartialEq, Debug)]
-pub enum CommandResponse {
-    Ok,
-    Error,
-}
-
-impl Display for CommandResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandResponse::Ok => {
-                write!(f, "Ok")
-            }
-            CommandResponse::Error => {
-                write!(f, "Error")
-            }
-        }
-    }
-}
 
 impl<'a> CommandAccessor<'a> {
 
@@ -143,13 +156,14 @@ impl<'a> CommandServiceClient {
 }
 
 pub struct CommandServiceServer<'c> {
-    command_store: &'c CommandStore
+    command_store: &'c CommandStore,
+    event_producer: &'c mut EventProducer
 }
 
 impl<'a> CommandServiceServer<'a> {
 
-    pub fn new(command_store: &'a CommandStore) -> Box<CommandServiceServer<'a>> {
-        Box::new(CommandServiceServer { command_store })
+    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut EventProducer) -> Box<CommandServiceServer<'a>> {
+        Box::new(CommandServiceServer { command_store, event_producer })
     }
 
     pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
@@ -157,7 +171,7 @@ impl<'a> CommandServiceServer<'a> {
         match message {
             None => debug!("No message"),
             Some(message) => {
-                let command_response = handle_command(&message, &self.command_store);
+                let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
                 match command_response {
                     None => {
                         error!("No command response")
@@ -169,6 +183,19 @@ impl<'a> CommandServiceServer<'a> {
             }
         }
     }
+
+    pub fn consume_async(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
+        let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
+        match command_response {
+            None => {
+                error!("No command response")
+            }
+            Some(command_response) => {
+                command_response_channel.send("".as_bytes().to_vec(), command_response);
+            }
+        }
+    }
+
 }
 
 
@@ -178,6 +205,16 @@ pub trait Command<'de> : Deserialize<'de> + Serialize {
     fn get_type(&self) -> String;
     fn get_version(&self) -> i32 {
         1
+    }
+}
+
+pub trait Event<'de> : Deserialize<'de> + Serialize {
+    fn get_id(&self) -> String;
+
+    fn get_type(&self) -> String;
+
+    fn get_version(&self) -> i32 {
+        return 1;
     }
 }
 
@@ -239,12 +276,12 @@ fn serialize_protobuf<M: Message+Sized>(envelope: &M) -> Vec<u8> {
     buf
 }
 
-fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore) -> Option<Vec<u8>> {
+fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut EventProducer) -> Option<Vec<u8>> {
     let result = envelope::CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);
 
-    let command_response = command_store.handle_command(&result.r#type, &mut deserializer);
+    let command_response = command_store.handle_command(&result.r#type, &mut deserializer, event_producer);
 
     match command_response {
         None => None,
@@ -268,8 +305,8 @@ struct CommandResponseResult {
 #[cfg(test)]
 mod tests {
 
-    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, CommandServiceServer, Command};
-    use serde::{Serialize, Deserialize};
+    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, CommandServiceServer, Command, EventProducer, Event};
+    use serde::{Serialize, Deserialize, Deserializer, Serializer};
 
     use log::{debug};
 
@@ -280,12 +317,29 @@ mod tests {
         name: String
     }
 
+    #[derive(Debug, Deserialize, Serialize)]
+    struct UserCreatedEvent {
+        user_id: String,
+        name: String
+    }
+
     impl Command<'_> for TestCreateUserCommand {
         fn get_subject(&self) -> String {
             self.user_id.to_owned()
         }
         fn get_type(&self) -> String {
             String::from("CreateUserCommand")
+        }
+    }
+
+
+    impl Event<'_> for UserCreatedEvent {
+        fn get_id(&self) -> String {
+            self.user_id.to_owned()
+        }
+
+        fn get_type(&self) -> String {
+            String::from("UserCreatedEvent")
         }
     }
 
@@ -340,11 +394,14 @@ mod tests {
         assert_eq!(command.name, deserialized_command.name);
     }
 
-    fn verify_handle_create_user(command_accessor: &mut CommandAccessor) -> CommandResponse {
+    fn verify_handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut EventProducer) -> CommandResponse {
         let command: Box<TestCreateUserCommand> = command_accessor.get_command();
 
         assert_eq!(command.user_id, "user_id");
         assert_eq!(command.name, "user_name");
+
+        let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
+        event_producer.produce(&event);
 
         CommandResponse::Ok
     }
@@ -362,9 +419,11 @@ mod tests {
 
         let mut command_channel = CapturingChannel { messages: Vec::new() };
         let mut command_response_channel = CapturingChannel { messages: Vec::new() };
+        let event_channel = CapturingChannel { messages: Vec::new() };
 
+        let event_producer = EventProducer::new(&event_channel, "COMMAND-SERVER");
         let mut command_service_client = CommandServiceClient::new("COMMAND-SERVERIMPORT");
-        let mut command_service_server = CommandServiceServer::new(&command_store);
+        let mut command_service_server = CommandServiceServer::new(&command_store, &event_producer);
 
         command_service_client.send_command(&command, &mut command_channel);
 
