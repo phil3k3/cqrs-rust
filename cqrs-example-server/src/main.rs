@@ -1,14 +1,16 @@
 use std::env;
-use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, EventProducer};
+use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, Event, EventProducer, EventProducerImpl};
 use cqrs_kafka::{KafkaOutboundChannel, StreamKafkaInboundChannel};
 use serde::{Serialize, Deserialize};
 use log::{debug, info};
 use config::Config;
 
-fn handle_create_user(command_accessor: &mut CommandAccessor, _event_producer: &mut EventProducer) -> CommandResponse {
+fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();
 
     info!("Creating user {} with id {}", command.name, command.user_id);
+    let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
+    event_producer.produce(&event, );
     CommandResponse::Ok
 }
 
@@ -24,6 +26,22 @@ impl Command<'_> for TestCreateUserCommand {
     }
     fn get_type(&self) -> String {
         String::from("CreateUserCommand")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct UserCreatedEvent {
+    user_id: String,
+    name: String
+}
+
+impl Event<'_> for UserCreatedEvent {
+    fn get_id(&self) -> String {
+        return self.user_id.to_owned();
+    }
+
+    fn get_type(&self) -> String {
+        return String::from("UserCreatedEvent");
     }
 }
 
@@ -65,7 +83,12 @@ async fn main() {
                 &settings.get_string("bootstrap_server").unwrap(),
             );
 
-            let mut event_producer = EventProducer::new("COMMAND-SERVER");
+            let mut event_channel = KafkaOutboundChannel::new(
+                "COMMAND-SERVER",
+                &settings.get_string("events_topic").unwrap(),
+                &settings.get_string("bootstrap_server").unwrap());
+
+            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(event_channel));
 
             let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
 

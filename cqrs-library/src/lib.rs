@@ -14,7 +14,7 @@ pub mod envelope {
 mod messages;
 
 pub struct CommandStore {
-    command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor, &mut EventProducer) -> CommandResponse>>,
+    command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse>>,
     service_id: String
 }
 
@@ -22,10 +22,10 @@ impl<'a> CommandStore {
     pub fn new(service_id: &str) -> CommandStore {
         CommandStore { command_handlers: HashMap::new(), service_id: String::from(service_id)}
     }
-    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor, &mut EventProducer) -> CommandResponse>) {
+    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse>) {
         self.command_handlers.insert(String::from(command), handler);
     }
-    fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut EventProducer) -> Option<CommandServerResult> {
+    fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut dyn EventProducer) -> Option<CommandServerResult> {
         let command_response = self.command_handlers.get(command_type).unwrap()(command_accessor, event_producer);
         Some(CommandServerResult {
             command_response,
@@ -34,14 +34,27 @@ impl<'a> CommandStore {
     }
 }
 
-pub struct EventProducer {
-    service_id: String
+pub struct EventProducerImpl {
+    service_id: String,
+    event_channel: Box<dyn OutboundChannel>
 }
 
-impl<'e> EventProducer {
+pub trait EventProducer {
+    fn produce<'e, T: Event<'e>>(&mut self, event: &T);
+}
 
-    pub fn new(service_id: &str) -> EventProducer {
-        EventProducer { service_id: String::from(service_id) }
+impl EventProducer for EventProducerImpl {
+
+    fn produce<'e, T: Event<'e>>(&mut self, event: &T) {
+        let event_message = self.convert_event(event);
+        self.event_channel.send(Vec::from(event.get_id()), event_message);
+    }
+}
+
+impl<'e> EventProducerImpl {
+
+    pub fn new(service_id: &str, event_channel: Box<dyn OutboundChannel>) -> EventProducerImpl {
+        EventProducerImpl { service_id: String::from(service_id), event_channel }
     }
 
     fn convert_event<T: Event<'e>>(&mut self, event: &T) -> Vec<u8> {
@@ -50,10 +63,6 @@ impl<'e> EventProducer {
         return event_serialized.0;
     }
 
-    pub fn produce<'a, T: Event<'e>>(&mut self, event: &T, event_channel: &'a mut (dyn OutboundChannel)) {
-        let event_message = self.convert_event(event);
-        event_channel.send(Vec::from(event.get_id()), event_message);
-    }
 }
 
 fn serialize_event_to_protobuf<'e, T: Event<'e>>(event: &T, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
@@ -157,12 +166,12 @@ impl<'a> CommandServiceClient {
 
 pub struct CommandServiceServer<'c> {
     command_store: &'c CommandStore,
-    event_producer: &'c mut EventProducer
+    event_producer: &'c mut EventProducerImpl
 }
 
 impl<'a> CommandServiceServer<'a> {
 
-    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut EventProducer) -> Box<CommandServiceServer<'a>> {
+    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut EventProducerImpl) -> Box<CommandServiceServer<'a>> {
         Box::new(CommandServiceServer { command_store, event_producer })
     }
 
@@ -276,7 +285,7 @@ fn serialize_protobuf<M: Message+Sized>(envelope: &M) -> Vec<u8> {
     buf
 }
 
-fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut EventProducer) -> Option<Vec<u8>> {
+fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut EventProducerImpl) -> Option<Vec<u8>> {
     let result = envelope::CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);
@@ -394,7 +403,7 @@ mod tests {
         assert_eq!(command.name, deserialized_command.name);
     }
 
-    fn verify_handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut EventProducer) -> CommandResponse {
+    fn verify_handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
         let command: Box<TestCreateUserCommand> = command_accessor.get_command();
 
         assert_eq!(command.user_id, "user_id");
