@@ -13,8 +13,10 @@ pub mod envelope {
 
 mod messages;
 
+type CommandHandlerFn = fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse;
+
 pub struct CommandStore {
-    command_handlers: HashMap<String, Box<dyn Fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse>>,
+    command_handlers: HashMap<String, CommandHandlerFn>,
     service_id: String
 }
 
@@ -22,7 +24,7 @@ impl<'a> CommandStore {
     pub fn new(service_id: &str) -> CommandStore {
         CommandStore { command_handlers: HashMap::new(), service_id: String::from(service_id)}
     }
-    pub fn register_handler(&mut self, command: &str, handler: Box<dyn Fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse>) {
+    pub fn register_handler(&mut self, command: &str, handler: CommandHandlerFn) {
         self.command_handlers.insert(String::from(command), handler);
     }
     fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut dyn EventProducer) -> Option<CommandServerResult> {
@@ -40,12 +42,12 @@ pub struct EventProducerImpl {
 }
 
 pub trait EventProducer {
-    fn produce<'e, T: Event<'e>>(&mut self, event: &T);
+    fn produce(&mut self, event: &dyn Event) ;
 }
 
 impl EventProducer for EventProducerImpl {
 
-    fn produce<'e, T: Event<'e>>(&mut self, event: &T) {
+    fn produce(&mut self, event: &dyn Event) {
         let event_message = self.convert_event(event);
         self.event_channel.send(Vec::from(event.get_id()), event_message);
     }
@@ -57,7 +59,7 @@ impl<'e> EventProducerImpl {
         EventProducerImpl { service_id: String::from(service_id), event_channel }
     }
 
-    fn convert_event<T: Event<'e>>(&mut self, event: &T) -> Vec<u8> {
+    fn convert_event(&mut self, event: &dyn Event) -> Vec<u8> {
         let event_id = Uuid::new_v4().to_string();
         let event_serialized = serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str());
         return event_serialized.0;
@@ -65,8 +67,8 @@ impl<'e> EventProducerImpl {
 
 }
 
-fn serialize_event_to_protobuf<'e, T: Event<'e>>(event: &T, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
-    let serialized_event = serde_json::to_vec(event).unwrap();
+fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
+    let serialized_event = serde_json::to_vec(&event).unwrap();
     let event_id = String::from(event_id);
     let event_envelope = envelope::DomainEventEnvelopeProto {
         id: event_id.to_owned(),
@@ -135,14 +137,6 @@ impl<'a> CommandServiceClient {
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
     }
-
-    pub fn plus_one(x: Option<i32>) -> Option<i32> {
-        match x {
-            None => None,
-            Some(i) => Some(i + 1),
-        }
-    }
-
 
     pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> Option<CommandResponse> {
         let serialized_message = command_response_channel.consume();
@@ -217,7 +211,8 @@ pub trait Command<'de> : Deserialize<'de> + Serialize {
     }
 }
 
-pub trait Event<'de> : Deserialize<'de> + Serialize {
+#[typetag::serde(tag = "type")]
+pub trait Event {
     fn get_id(&self) -> String;
 
     fn get_type(&self) -> String;
@@ -226,7 +221,6 @@ pub trait Event<'de> : Deserialize<'de> + Serialize {
         return 1;
     }
 }
-
 
 
 fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> (Vec<u8>, String) {
@@ -410,7 +404,7 @@ mod tests {
         assert_eq!(command.name, "user_name");
 
         let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
-        event_producer.produce(&event);
+        event_producer.produce(Box::new(event));
 
         CommandResponse::Ok
     }

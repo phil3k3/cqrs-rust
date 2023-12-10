@@ -10,7 +10,7 @@ fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &m
 
     info!("Creating user {} with id {}", command.name, command.user_id);
     let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
-    event_producer.produce(&event, );
+    event_producer.produce(&event);
     CommandResponse::Ok
 }
 
@@ -35,7 +35,8 @@ struct UserCreatedEvent {
     name: String
 }
 
-impl Event<'_> for UserCreatedEvent {
+#[typetag::serde]
+impl Event for UserCreatedEvent {
     fn get_id(&self) -> String {
         return self.user_id.to_owned();
     }
@@ -75,7 +76,7 @@ async fn main() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async move {
             let mut command_store = CommandStore::new("COMMAND-SERVER");
-            command_store.register_handler("CreateUserCommand", Box::new(&handle_create_user));
+            command_store.register_handler("CreateUserCommand", handle_create_user);
 
             let mut command_channel = StreamKafkaInboundChannel::new(
                 "COMMAND-SERVER",

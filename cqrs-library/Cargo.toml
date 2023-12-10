@@ -16,6 +16,7 @@ chrono = "0.4"
 lazy_static = "1.4.0"
 dashmap = "5.3.3"
 log = "0.4.17"
+typetag = "0.2"
 
 [build-dependencies]
 prost-build = "0.9"
