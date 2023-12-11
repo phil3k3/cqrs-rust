@@ -36,7 +36,7 @@ impl ProducerContext for ProducerCallbackLogger {
     }
 }
 
-fn create_producer(bootstrap_server: String, service_id: &str) -> Result<ThreadedProducer<ProducerCallbackLogger>, KafkaError> {
+fn create_producer(bootstrap_server: String) -> Result<ThreadedProducer<ProducerCallbackLogger>, KafkaError> {
     let mut config = ClientConfig::new();
     config
         .set("bootstrap.servers", bootstrap_server)
@@ -55,10 +55,10 @@ fn create_admin_client(bootstrap_server: String) -> Result<AdminClient<ProducerC
 
 
 impl KafkaOutboundChannel {
-    pub fn new(service_id: &str, topic: &str, bootstrap_server: &str) -> KafkaOutboundChannel {
+    pub fn new(topic: &str, bootstrap_server: &str) -> KafkaOutboundChannel {
         KafkaOutboundChannel {
             topic: topic.to_owned(),
-            producer: create_producer(bootstrap_server.to_string(), service_id).unwrap(),
+            producer: create_producer(bootstrap_server.to_string()).unwrap(),
             admin_client: create_admin_client(bootstrap_server.to_string()).unwrap()
         }
     }
@@ -88,6 +88,6 @@ impl OutboundChannel for KafkaOutboundChannel {
         for _ in 0..10 {
             self.producer.poll(Duration::from_millis(100));
         }
-        self.producer.flush(Duration::from_secs(60));
+        self.producer.flush(Duration::from_secs(60)).expect("Flush failed");
     }
 }

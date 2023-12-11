@@ -2,9 +2,10 @@ use std::env;
 use std::process::exit;
 use config::Config;
 use cqrs_library::{CommandServiceClient, Command, EventListener, Event};
-use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel, StreamKafkaInboundChannel};
+use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
+use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Deserialize, Serialize};
-use log::{debug, info};
+use log::info;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
@@ -67,7 +68,6 @@ async fn main() {
     let mut command_service_client = CommandServiceClient::new(&settings.get_string("service_id").unwrap());
 
     let mut kafka_command_channel = KafkaOutboundChannel::new(
-        &settings.get_string("service_id").unwrap(),
         &settings.get_string("command_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap()
     );
@@ -84,20 +84,20 @@ async fn main() {
     );
     info!("Message sent!");
 
-    tokio::spawn(async || {
+    tokio::spawn(async move {
 
         let mut event_listener = EventListener::new();
         event_listener.register_handler("UserCreatedEvent", handle_event);
 
         let x = &settings.get_string("service_subscriptions").unwrap();
         let topics = x.split(",").collect::<Vec<&str>>();
-        let mut kafka_event_listener_channel =  StreamKafkaInboundChannel::new(
+        let kafka_event_listener_channel =  StreamKafkaInboundChannel::new(
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap()
         );
 
-        kafka_event_listener_channel.consume_async_blocking(event_listener).await;
+        kafka_event_listener_channel.consume_async_blocking(&event_listener).await;
     });
 
     command_service_client.send_command(&command, &mut kafka_command_channel);

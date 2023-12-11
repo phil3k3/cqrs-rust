@@ -93,7 +93,7 @@ impl StreamKafkaInboundChannel {
         }
     }
 
-    pub async fn consume_async_blocking(&self, event_listener: EventListener)  {
+    pub async fn consume_async_blocking(&self, event_listener: &EventListener)  {
 
         let consumer: StreamConsumer = ClientConfig::new()
             .set("group.id", "test_group")
@@ -101,12 +101,23 @@ impl StreamKafkaInboundChannel {
             .set("enable.auto.commit", "true")
             .create()
             .expect("Consumer creation failed");
-        let stream_consumer = consumer.stream().try_for_each(|borrowed_message|  {
+        return consumer.stream().try_for_each(|borrowed_message| {
             async move {
+                let payload = match borrowed_message.payload_view::<str>() {
+                    Some(Ok(s)) => s,
+                    Some(Err(e)) => {
+                        println!("Error while deserializing message payload: {:?}", e);
+                        ""
+                    },
+                    None => "<no payload>",
+                };
                 event_listener.consume(borrowed_message.payload().unwrap());
+
+                println!("Key: '{:?}', Payload: '{}', Topic: '{}', Partition: {}, Offset: {}",
+                         borrowed_message.key(), payload, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
+                Ok(())  // Important to return Ok(()) for successful processing
             }
-        });
-        stream_consumer.await.expect("Stream processing failed");
+        }).await.expect("Stream processing failed");
     }
 }
 

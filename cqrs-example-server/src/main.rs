@@ -1,9 +1,10 @@
 use std::env;
 use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, Event, EventProducer, EventProducerImpl};
-use cqrs_kafka::{KafkaOutboundChannel, StreamKafkaInboundChannel};
+use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Serialize, Deserialize};
 use log::{debug, info};
 use config::Config;
+use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 
 fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();
@@ -62,7 +63,6 @@ async fn main() {
     env_logger::init();
 
     let mut command_response_channel = KafkaOutboundChannel::new(
-        "COMMAND-SERVER",
         &settings.get_string("response_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap(),
     );
@@ -84,8 +84,7 @@ async fn main() {
                 &settings.get_string("bootstrap_server").unwrap(),
             );
 
-            let mut event_channel = KafkaOutboundChannel::new(
-                "COMMAND-SERVER",
+            let event_channel = KafkaOutboundChannel::new(
                 &settings.get_string("events_topic").unwrap(),
                 &settings.get_string("bootstrap_server").unwrap());
 

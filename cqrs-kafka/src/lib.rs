@@ -1,11 +1,5 @@
-mod inbound;
-mod outbound;
-
-use rdkafka::{ClientContext, Message};
-use rdkafka::consumer::Consumer;
-use rdkafka::consumer::ConsumerContext;
-use rdkafka::producer::{Producer, ProducerContext};
-use cqrs_library::{InboundChannel, OutboundChannel};
+pub mod inbound;
+pub mod outbound;
 
 #[cfg(test)]
 mod tests {
@@ -50,7 +44,7 @@ mod tests {
         );
 
         info!("{}", bootstrap_servers);
-        let mut outbound_channel = KafkaOutboundChannel::new("TEST_OUT", "TEST", &bootstrap_servers);
+        let mut outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers);
 
         outbound_channel.create_topic("TEST").await;
 
