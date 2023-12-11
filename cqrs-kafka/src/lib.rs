@@ -1,228 +1,34 @@
-use std::thread;
-use std::thread::JoinHandle;
-use std::time::Duration;
-use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
-use rdkafka::config::RDKafkaLogLevel;
-use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
-use rdkafka::error::{KafkaError, KafkaResult};
-use rdkafka::message::DeliveryResult;
-use rdkafka::producer::{BaseRecord, Producer, ProducerContext, ThreadedProducer};
+mod inbound;
+mod outbound;
+
+use rdkafka::{ClientContext, Message};
+use rdkafka::consumer::Consumer;
+use rdkafka::consumer::ConsumerContext;
+use rdkafka::producer::{Producer, ProducerContext};
 use cqrs_library::{InboundChannel, OutboundChannel};
-use log::{error, info};
-use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
-
-
-struct ProducerCallbackLogger;
-impl ClientContext for ProducerCallbackLogger {
-
-}
-
-// A context can be used to change the behavior of producers and consumers by adding callbacks
-// that will be executed by librdkafka.
-// This particular context sets up custom callbacks to log rebalancing events.
-struct CustomContext;
-
-impl ClientContext for CustomContext {}
-
-impl ConsumerContext for CustomContext {
-    fn pre_rebalance(&self, rebalance: &Rebalance) {
-        info!("Pre rebalance {:?}", rebalance);
-    }
-
-    fn post_rebalance(&self, rebalance: &Rebalance) {
-        info!("Post rebalance {:?}", rebalance);
-    }
-
-    fn commit_callback(&self, result: KafkaResult<()>, _offsets: &TopicPartitionList) {
-        info!("Committing offsets: {:?}", result);
-    }
-}
-
-// A type alias with your custom consumer can be created for convenience.
-type LoggingConsumer = BaseConsumer<CustomContext>;
-type LoggingStreamingConsumer = StreamConsumer<CustomContext>;
-
-pub struct KafkaOutboundChannel {
-    topic: String,
-    producer: ThreadedProducer<ProducerCallbackLogger>,
-    admin_client: AdminClient<ProducerCallbackLogger>
-}
-
-pub struct KafkaInboundChannel {
-    consumer: BaseConsumer<CustomContext>
-}
-
-pub struct StreamKafkaInboundChannel {
-    consumer: StreamConsumer<CustomContext>
-}
-
-
-impl ProducerContext for ProducerCallbackLogger {
-    type DeliveryOpaque = ();
-
-    fn delivery(&self, delivery_result: &DeliveryResult<'_>, _delivery_opaque: Self::DeliveryOpaque) {
-        let unwrapped_result = delivery_result.as_ref();
-        match unwrapped_result {
-            Ok(msg) => {
-                let key : &str = msg.key_view().unwrap().unwrap();
-                info!("Produced message with key {} in offset {} and partition {}", key, msg.offset(), msg.partition());
-            }
-            Err(producer_error) => {
-                let key : &str = producer_error.1.key_view().unwrap().unwrap();
-                error!("Failed to produce message with key {}: {}", key, producer_error.0);
-            }
-        }
-    }
-}
-
-fn create_producer(bootstrap_server: String, service_id: &str) -> Result<ThreadedProducer<ProducerCallbackLogger>, KafkaError> {
-    let mut config = ClientConfig::new();
-    config
-        .set("bootstrap.servers", bootstrap_server)
-        .set("message.timeout.ms", "5000")
-        .set("debug", "broker,topic,msg");
-    config.set_log_level(RDKafkaLogLevel::Debug);
-    config.create_with_context(ProducerCallbackLogger {})
-}
-
-
-fn create_admin_client(bootstrap_server: String) -> Result<AdminClient<ProducerCallbackLogger>, KafkaError> {
-    let mut config = ClientConfig::new();
-    config.set("bootstrap.servers", bootstrap_server);
-    config.set_log_level(RDKafkaLogLevel::Debug);
-    config.create_with_context(ProducerCallbackLogger {})
-}
-
-
-impl KafkaOutboundChannel {
-    pub fn new(service_id: &str, topic: &str, bootstrap_server: &str) -> KafkaOutboundChannel {
-        KafkaOutboundChannel {
-            topic: topic.to_owned(),
-            producer: create_producer(bootstrap_server.to_string(), service_id).unwrap(),
-            admin_client: create_admin_client(bootstrap_server.to_string()).unwrap()
-        }
-    }
-
-    pub async fn create_topic(&self, topic: &str) {
-        let result = self.admin_client
-            .create_topics(
-                &[NewTopic::new(topic, 1, TopicReplication::Fixed(1))],
-                &AdminOptions::new(),
-            )
-            .await;
-        match result {
-            Ok(_result) => info!("Topic {} created", topic),
-            Err(error) => error!("Error creating topic {}: {}", topic, error)
-        }
-    }
-}
-
-
-impl OutboundChannel for KafkaOutboundChannel {
-    fn send(&mut self, key: Vec<u8>, message: Vec<u8>) {
-        self.producer
-            .send(BaseRecord::to(self.topic.as_str())
-                .key(&key)
-                .payload(&message))
-            .expect("Failed to send message");
-        for _ in 0..10 {
-            self.producer.poll(Duration::from_millis(100));
-        }
-        self.producer.flush(Duration::from_secs(60));
-    }
-}
-
-impl KafkaInboundChannel {
-    pub fn new(service_id: &str,topics: &[&str], bootstrap_server: &str) -> KafkaInboundChannel {
-       let channel = KafkaInboundChannel {
-            consumer: KafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string()).unwrap()
-        };
-        channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
-        channel
-    }
-    fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingConsumer, KafkaError> {
-        let mut config = ClientConfig::new();
-        config
-            .set("group.id", format!("{}-consumer", &service_id))
-            .set("bootstrap.servers", &bootstrap_server)
-            .set("session.timeout.ms", "6000")
-            .set("enable.auto.commit", "true")
-            .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
-
-        // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
-        config.create_with_context(CustomContext {})
-    }
-}
-
-impl StreamKafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> StreamKafkaInboundChannel {
-        let channel = StreamKafkaInboundChannel {
-            consumer: StreamKafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string()).unwrap()
-        };
-        channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
-        channel
-    }
-
-    fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingStreamingConsumer, KafkaError> {
-        let mut config = ClientConfig::new();
-        config
-            .set("group.id", format!("{}-consumer", &service_id))
-            .set("bootstrap.servers", &bootstrap_server)
-            .set("session.timeout.ms", "6000")
-            .set("enable.auto.commit", "true")
-            .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
-
-        // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
-        config.create_with_context(CustomContext {})
-    }
-
-    pub async fn async_consume(&mut self) -> Option<Vec<u8>> {
-        let message = self.consumer.recv().await;
-        match message {
-            Ok(t) => t.payload().and_then(|y| Some(y.to_vec())),
-            Err(_v) => None
-        }
-    }
-}
-
-
-
-impl InboundChannel for KafkaInboundChannel {
-    fn consume(&mut self) -> Option<Vec<u8>> {
-        return self.consumer.poll(Duration::from_secs(1))
-            .and_then(|x| match x {
-                    Ok(t) => t.payload().and_then(|y| Some(y.to_vec())),
-                    Err(_v) => None
-                }
-        );
-    }
-}
-
-
-pub struct Runtime<TARGET> {
-    handle: JoinHandle<TARGET>
-}
-
-impl<TARGET:Send + 'static> Runtime<TARGET> {
-    pub fn new<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> JoinHandle<TARGET>  {
-        thread::spawn(f)
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::channel;
     use std::{thread};
+    use std::thread::JoinHandle;
+    use futures::SinkExt;
     use log::info;
     use testcontainers::{clients, images::kafka};
     use cqrs_library::{InboundChannel, OutboundChannel};
-    use crate::{KafkaInboundChannel, KafkaOutboundChannel, Runtime};
+    use crate::inbound::KafkaInboundChannel;
+    use crate::outbound::KafkaOutboundChannel;
+
+    impl<TARGET:Send + 'static> Runtime<TARGET> {
+        pub fn new<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> JoinHandle<TARGET>  {
+            thread::spawn(f)
+        }
+    }
+
+
+    pub struct Runtime<TARGET> {
+        handle: JoinHandle<TARGET>
+    }
 
 
 

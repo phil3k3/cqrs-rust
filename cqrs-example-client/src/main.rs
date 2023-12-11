@@ -1,10 +1,10 @@
 use std::env;
 use std::process::exit;
 use config::Config;
-use cqrs_library::{CommandServiceClient, Command};
-use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel};
+use cqrs_library::{CommandServiceClient, Command, EventListener, Event};
+use cqrs_kafka::{KafkaInboundChannel, KafkaOutboundChannel, StreamKafkaInboundChannel};
 use serde::{Deserialize, Serialize};
-use log::info;
+use log::{debug, info};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
@@ -21,7 +21,30 @@ impl Command<'_> for CreateUserCommand {
     }
 }
 
-fn main() {
+#[derive(Debug, Deserialize, Serialize)]
+struct UserCreatedEvent {
+    user_id: String,
+    user_name: String
+}
+
+#[typetag::serde]
+impl Event for UserCreatedEvent {
+    fn get_id(&self) -> String {
+        return self.user_id.to_owned();
+    }
+
+    fn get_type(&self) -> String {
+        return String::from("UserCreatedEvent");
+    }
+}
+
+fn handle_event(event: &dyn Event) {
+    dbg!(event);
+    print!("user created received");
+}
+
+#[tokio::main]
+async fn main() {
 
     info!("=== STARTING EXAMPLE CQRS CLIENT ===");
 
@@ -52,7 +75,7 @@ fn main() {
         user_id: String::from("Test"),
         name: String::from("Name")
     };
-    command_service_client.send_command(&command, &mut kafka_command_channel);
+
 
     let mut kafka_command_response_channel = KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
@@ -61,6 +84,23 @@ fn main() {
     );
     info!("Message sent!");
 
+    tokio::spawn(async || {
+
+        let mut event_listener = EventListener::new();
+        event_listener.register_handler("UserCreatedEvent", handle_event);
+
+        let x = &settings.get_string("service_subscriptions").unwrap();
+        let topics = x.split(",").collect::<Vec<&str>>();
+        let mut kafka_event_listener_channel =  StreamKafkaInboundChannel::new(
+            &settings.get_string("service_id").unwrap(),
+            topics.as_slice(),
+            &settings.get_string("bootstrap_server").unwrap()
+        );
+
+        kafka_event_listener_channel.consume_async_blocking(event_listener).await;
+    });
+
+    command_service_client.send_command(&command, &mut kafka_command_channel);
     loop {
         let response = command_service_client.read_response(&mut kafka_command_response_channel);
         match response {

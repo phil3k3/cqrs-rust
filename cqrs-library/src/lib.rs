@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::Cursor;
+use std::ops::Deref;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
@@ -123,6 +125,48 @@ pub struct CommandServiceClient {
     service_instance_id: u32
 }
 
+pub struct EventListener {
+    handlers: HashMap<String, Vec<EventHandlerFn>>
+}
+
+type EventHandlerFn = fn(&dyn Event) -> ();
+
+impl EventListener {
+
+    pub fn new() -> EventListener {
+        EventListener { handlers: HashMap::new() }
+    }
+
+    pub fn register_handler(&mut self, event_type: &str, handler: EventHandlerFn) {
+        let handlers = self.handlers.get(event_type);
+        match handlers {
+            None => {
+                self.handlers.insert(String::from(event_type), Vec::new());
+            }
+            _ => {}
+        }
+        let vec = self.handlers.get_mut(event_type).unwrap();
+        vec.push(handler);
+    }
+
+    pub fn consume(&self, event_message: &[u8]) {
+        let result = envelope::DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let event: Box<dyn Event> = serde_json::from_slice(result.event.as_slice()).unwrap();
+        let handlers = self.handlers.get(result.r#type.as_str());
+        match handlers {
+            None => {
+                error!("No event handlers found for event type {} and version {}",
+                    event.get_type(), event.get_version());
+            }
+            Some(handlers) => {
+                for handler in handlers {
+                    handler(event.deref());
+                }
+            }
+        }
+    }
+}
+
 impl<'a> CommandServiceClient {
 
     pub fn new(service_id: &str) -> CommandServiceClient {
@@ -133,6 +177,12 @@ impl<'a> CommandServiceClient {
     }
 
     pub fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
+        let command_id = Uuid::new_v4().to_string();
+        let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
+        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
+    }
+
+    pub fn send_command_async<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
@@ -212,7 +262,7 @@ pub trait Command<'de> : Deserialize<'de> + Serialize {
 }
 
 #[typetag::serde(tag = "type")]
-pub trait Event {
+pub trait Event : Debug {
     fn get_id(&self) -> String;
 
     fn get_type(&self) -> String;
@@ -275,7 +325,7 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
 fn serialize_protobuf<M: Message+Sized>(envelope: &M) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.reserve(envelope.encoded_len());
-    envelope.encode(&mut buf);
+    envelope.encode(&mut buf).expect("Encoding failed");
     buf
 }
 
@@ -335,7 +385,7 @@ mod tests {
         }
     }
 
-
+    #[typetag::serde]
     impl Event<'_> for UserCreatedEvent {
         fn get_id(&self) -> String {
             self.user_id.to_owned()
@@ -404,7 +454,7 @@ mod tests {
         assert_eq!(command.name, "user_name");
 
         let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
-        event_producer.produce(Box::new(event));
+        event_producer.produce(&event);
 
         CommandResponse::Ok
     }
@@ -418,7 +468,7 @@ mod tests {
         };
 
         let mut command_store = CommandStore::new("COMMAND-SERVER");
-        command_store.register_handler("CreateUserCommand", Box::new(&verify_handle_create_user));
+        command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
         let mut command_channel = CapturingChannel { messages: Vec::new() };
         let mut command_response_channel = CapturingChannel { messages: Vec::new() };
