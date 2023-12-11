@@ -1,4 +1,5 @@
 command_topic = "TEST"
 response_topic = "TEST_RESPONSE"
+events_topic = "TEST_EVENTS"
 bootstrap_server = "127.0.0.1:9092"
 log_level = "debug"
