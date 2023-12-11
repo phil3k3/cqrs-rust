@@ -125,6 +125,12 @@ pub struct CommandServiceClient {
     service_instance_id: u32
 }
 
+impl CommandServiceClient {
+    pub fn clone(&self) -> CommandServiceClient {
+        return CommandServiceClient::new(self.service_id.clone().as_str());
+    }
+}
+
 pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>
 }
