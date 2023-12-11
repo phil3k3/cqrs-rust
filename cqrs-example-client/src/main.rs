@@ -52,8 +52,6 @@ async fn post_user(user_id: web::Path<String>) -> impl Responder {
         .content_type(ContentType::plaintext())
         .body(user_id.as_str())
 }
-
-
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     info!("=== STARTING EXAMPLE CQRS CLIENT ===");
