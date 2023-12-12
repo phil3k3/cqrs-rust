@@ -15,10 +15,11 @@ sequenceDiagram
     participant 'Command Service Client'
     participant 'Event Listener A'
     participant 'Event Listener B'
-    'Command Server'->>'Command Service Client': Create user 'Bob'
-    John-->>Alice: Great!
-    John->>Bob: How about you?
-    Bob-->>John: Jolly good!
+    activate 'Command Server'
+    'Command Service Client'->>'Command Server': Create user 'Bob'
+    deactivate 'Command Server'
+    'Command Server'-->>'Event Listener A': User 'Bob' created
+    'Command Server'-->>'Event Listener B': User 'Bob' created
 ```
 
 
