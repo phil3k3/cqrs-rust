@@ -122,13 +122,9 @@ pub trait InboundChannel {
 
 pub struct CommandServiceClient {
     service_id: String,
-    service_instance_id: u32
-}
-
-impl CommandServiceClient {
-    pub fn clone(&self) -> CommandServiceClient {
-        return CommandServiceClient::new(self.service_id.clone().as_str());
-    }
+    service_instance_id: u32,
+    command_channel: Box<dyn OutboundChannel + Sync + Send>,
+    command_response_channel: Box<dyn InboundChannel + Sync + Send>
 }
 
 pub struct EventListener {
@@ -175,17 +171,28 @@ impl EventListener {
 
 impl<'a> CommandServiceClient {
 
-    pub fn new(service_id: &str) -> CommandServiceClient {
+    pub fn new(service_id: &str, command_channel: Box<dyn OutboundChannel + Sync + Send>, command_response_channel: Box<dyn InboundChannel + Sync + Send>) -> CommandServiceClient {
         CommandServiceClient {
             service_id: String::from(service_id),
             service_instance_id: 0u32,
+            command_channel,
+            command_response_channel
         }
     }
 
-    pub fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
+    pub fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
-        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
+        self.command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
+        loop {
+            let response = self.read_response();
+            match response {
+                None => {}
+                Some(result) => {
+                    return result;
+                }
+            }
+        }
     }
 
     pub fn send_command_async<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
@@ -194,8 +201,8 @@ impl<'a> CommandServiceClient {
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
     }
 
-    pub fn read_response(&mut self, command_response_channel: &mut (dyn InboundChannel)) -> Option<CommandResponse> {
-        let serialized_message = command_response_channel.consume();
+    fn read_response(&mut self) -> Option<CommandResponse> {
+        let serialized_message = self.command_response_channel.consume();
         return match serialized_message {
             None => {
                 debug!("No response");
@@ -481,13 +488,13 @@ mod tests {
         let event_channel = CapturingChannel { messages: Vec::new() };
 
         let event_producer = EventProducer::new(&event_channel, "COMMAND-SERVER");
-        let mut command_service_client = CommandServiceClient::new("COMMAND-SERVERIMPORT");
+        let mut command_service_client = CommandServiceClient::new("COMMAND-SERVERIMPORT", Box::new(command_channel), Box::new(command_response_channel));
         let mut command_service_server = CommandServiceServer::new(&command_store, &event_producer);
 
         command_service_client.send_command(&command, &mut command_channel);
 
         command_service_server.consume(&mut command_channel, &mut command_response_channel);
-        let command_response = command_service_client.read_response(&mut command_response_channel);
+        let command_response = command_service_client.read_response();
 
         assert_eq!(command_response, CommandResponse::Ok);
     }
