@@ -1,10 +1,11 @@
 # cqrs-rust
 
-A simple command server/command service client written in Rust, it doesn't use any async features yet but that is the next step.
+A simple command server/command service client written in Rust.
 
-Requirements: 
-    cargo
-    cmake (for librdkafka)
+Requirements:
+* cargo
+* cmake (for librdkafka)
+* protoc
 
 Visual example:
 
