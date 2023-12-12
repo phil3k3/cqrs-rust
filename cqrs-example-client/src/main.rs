@@ -17,7 +17,7 @@ struct CreateUserCommand {
 }
 
 struct AppState {
-    client: Mutex<CommandServiceClient>
+    client: Mutex<CommandServiceClient>,
 }
 
 impl Command<'_> for CreateUserCommand {
@@ -72,6 +72,7 @@ async fn post_user(
         .content_type(ContentType::plaintext())
         .body(result.unwrap())
 }
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     info!("=== STARTING EXAMPLE CQRS CLIENT ===");
@@ -119,13 +120,15 @@ async fn main() -> io::Result<()> {
             &settings2.get_string("bootstrap_server").unwrap(),
         );
         let command_service_client_data = web::Data::new(
-            Mutex::new(
-                CommandServiceClient::new(
-                    &settings2.get_string("service_id").unwrap(),
-                    Box::new(kafka_command_channel),
-                    Box::new(kafka_command_response_channel)
+            AppState {
+                client: Mutex::new(
+                    CommandServiceClient::new(
+                        &settings2.get_string("service_id").unwrap(),
+                        Box::new(kafka_command_channel),
+                        Box::new(kafka_command_response_channel),
+                    )
                 )
-            )
+            }
         );
         App::new()
             .app_data(command_service_client_data.clone())
