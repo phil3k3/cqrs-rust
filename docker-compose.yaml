@@ -38,7 +38,9 @@ services:
       - "9002:9000"
     environment:
       KAFKA_BROKERCONNECT: 'broker:29092'
-      CMD_ARGS: '--schemaregistry.connect=http://schema-registry:8081 --message.format=PROTOBUF --message.keyFormat=DEFAULT'
+      CMD_ARGS: '--schemaregistry.connect=http://schema-registry:8081 --message.format=PROTOBUF --message.keyFormat=DEFAULT --protobufdesc.directory=/var/protobuf_desc'
       SERVER_SERVLET_CONTEXTPATH: /
+    volumes:
+      - ./protobuf:/var/protobuf_desc
     depends_on:
       - broker

@@ -1,0 +1,46 @@
+
+´	
+cqrs-library/src/messages.protocqrs"˜
+CommandEnvelopeProto
+id (	Rid
+	timestamp (R	timestamp
+	serviceId (	R	serviceId,
+serviceInstanceId (RserviceInstanceId$
+transactionId (	RtransactionId
+version (Rversion
+type (	Rtype
+subject (	Rsubject
+command (Rcommand"ª
+CommandResponseEnvelopeProto$
+transactionId (	RtransactionId
+	commandId (	R	commandId
+	timestamp (R	timestamp
+	serviceId (	R	serviceId
+type (	Rtype
+version (Rversion
+response (Rresponse0
+error (2.cqrs.GenericApiErrorProtoRerror
+id	 (	Rid"z
+GenericApiErrorProto
+message (	Rmessage*
+developerMessage (	RdeveloperMessage
+	errorCode (	R	errorCode"÷
+DomainEventEnvelopeProto
+id (	Rid$
+transactionId (	RtransactionId
+	timestamp (R	timestamp
+type (	Rtype
+version (Rversion5
+
+streamInfo (2.cqrs.StreamInfoProtoR
+streamInfo
+event (Revent"
+partitionKey (	RpartitionKey.
+producingServiceId
+ (	RproducingServiceId8
+producingServiceVersion (	RproducingServiceVersion"A
+StreamInfoProto
+id (	Rid
+
+entityType (	R
+entityTypeBHbproto3
