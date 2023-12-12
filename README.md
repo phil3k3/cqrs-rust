@@ -11,13 +11,11 @@ Visual example:
 
 ```mermaid
 sequenceDiagram
-    participant Alice
-    participant Bob
-    Alice->>John: Hello John, how are you?
-    loop Healthcheck
-        John->>John: Fight against hypochondria
-    end
-    Note right of John: Rational thoughts <br/>prevail!
+    participant 'Command Server'
+    participant 'Command Service Client'
+    participant 'Event Listener A'
+    participant 'Event Listener B'
+    'Command Server'->>'Command Service Client': Create user 'Bob'
     John-->>Alice: Great!
     John->>Bob: How about you?
     Bob-->>John: Jolly good!
