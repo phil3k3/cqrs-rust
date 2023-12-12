@@ -15,8 +15,9 @@ sequenceDiagram
     participant 'Command Service Client'
     participant 'Event Listener A'
     participant 'Event Listener B'
-    activate 'Command Server'
     'Command Service Client'->>'Command Server': Create user 'Bob'
+    activate 'Command Server'
+    'Command Server'->>'Command Service Client': Ok
     deactivate 'Command Server'
     'Command Server'-->>'Event Listener A': User 'Bob' created
     'Command Server'-->>'Event Listener B': User 'Bob' created
