@@ -51,11 +51,11 @@ impl KafkaInboundChannel {
             .set("session.timeout.ms", "6000")
             .set("enable.auto.commit", "true")
             .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
+            .set("auto.offset.reset", "earliest");
+            // .set("debug", "consumer,cgrp,topic,fetch");
 
         // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
+        // config.set_log_level(RDKafkaLogLevel::Debug);
         config.create_with_context(CustomContext {})
     }
 }
@@ -77,11 +77,11 @@ impl StreamKafkaInboundChannel {
             .set("session.timeout.ms", "6000")
             .set("enable.auto.commit", "true")
             .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
+            .set("auto.offset.reset", "earliest");
+            // .set("debug", "consumer,cgrp,topic,fetch");
 
         // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
+        // config.set_log_level(RDKafkaLogLevel::Debug);
         config.create_with_context(CustomContext {})
     }
 
@@ -96,18 +96,10 @@ impl StreamKafkaInboundChannel {
     pub async fn consume_async_blocking(&self, event_listener: &EventListener) {
         return self.consumer.stream().try_for_each(|borrowed_message| {
             async move {
-                let payload = match borrowed_message.payload_view::<str>() {
-                    Some(Ok(s)) => s,
-                    Some(Err(e)) => {
-                        println!("Error while deserializing message payload: {:?}", e);
-                        ""
-                    }
-                    None => "<no payload>",
-                };
                 event_listener.consume(borrowed_message.payload().unwrap());
-
-                println!("Key: '{:?}', Payload: '{}', Topic: '{}', Partition: {}, Offset: {}",
-                         borrowed_message.key(), payload, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
+                let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
+                println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
+                         key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
                 Ok(())  // Important to return Ok(()) for successful processing
             }
         }).await.expect("Stream processing failed");

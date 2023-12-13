@@ -40,16 +40,16 @@ fn create_producer(bootstrap_server: String) -> Result<ThreadedProducer<Producer
     let mut config = ClientConfig::new();
     config
         .set("bootstrap.servers", bootstrap_server)
-        .set("message.timeout.ms", "5000")
-        .set("debug", "broker,topic,msg");
-    config.set_log_level(RDKafkaLogLevel::Debug);
+        .set("message.timeout.ms", "5000");
+        // .set("debug", "broker,topic,msg");
+    // config.set_log_level(RDKafkaLogLevel::Debug);
     config.create_with_context(ProducerCallbackLogger {})
 }
 
 fn create_admin_client(bootstrap_server: String) -> Result<AdminClient<ProducerCallbackLogger>, KafkaError> {
     let mut config = ClientConfig::new();
     config.set("bootstrap.servers", bootstrap_server);
-    config.set_log_level(RDKafkaLogLevel::Debug);
+    // config.set_log_level(RDKafkaLogLevel::Debug);
     config.create_with_context(ProducerCallbackLogger {})
 }
 

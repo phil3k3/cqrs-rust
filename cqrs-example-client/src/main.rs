@@ -47,15 +47,14 @@ impl Event for UserCreatedEvent {
 }
 
 fn handle_event(event: &dyn Event) {
-    dbg!(event);
-    print!("user created received");
+    info!("{:?}", event);
 }
 
 #[post("/users/{user_id}")]
 async fn post_user(
     command_service_client: web::Data<AppState>,
     user_id: web::Path<String>) -> impl Responder {
-    print!("Creating user {}", user_id);
+    info!("Creating user {}", user_id);
     let command = CreateUserCommand {
         user_id: Uuid::new_v4().to_string(),
         name: String::from(user_id.into_inner()),
