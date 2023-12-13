@@ -7,6 +7,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use prost::Message;
 use log::{debug, error};
+use crate::envelope::DomainEventEnvelopeProto;
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -152,9 +153,20 @@ impl EventListener {
     }
 
     pub fn consume(&self, event_message: &[u8]) {
-        let result = envelope::DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
-        let event: Box<dyn Event> = serde_json::from_slice(result.event.as_slice()).unwrap();
-        let handlers = self.handlers.get(result.r#type.as_str());
+        let result = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let result1 = serde_json::from_slice(result.event.as_slice());
+        match result1 {
+            Ok(event) => {
+                self.match_handlers(result.r#type, event);
+            }
+            Err(err) => {
+                error!("Error deserializing event {}", err);
+            }
+        }
+    }
+
+    fn match_handlers(&self, result: String, event: Box<dyn Event>) {
+        let handlers = self.handlers.get(result.as_str());
         match handlers {
             None => {
                 error!("No event handlers found for event type {} and version {}",
