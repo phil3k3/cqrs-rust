@@ -32,7 +32,7 @@ impl Command<'_> for CreateUserCommand {
 #[derive(Debug, Deserialize, Serialize)]
 struct UserCreatedEvent {
     user_id: String,
-    user_name: String,
+    name: String,
 }
 
 #[typetag::serde]
