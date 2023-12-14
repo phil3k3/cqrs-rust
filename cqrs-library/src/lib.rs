@@ -1,12 +1,19 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::Deref;
+use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
+use config::Config;
 use prost::Message;
-use log::{debug, error};
+use log::{debug, error, info};
+use tokio::sync::oneshot::{channel, Sender, Receiver};
+use tokio::sync::oneshot::error::RecvError;
+use tokio::task::JoinHandle;
+use crate::envelope::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -72,7 +79,7 @@ impl<'e> EventProducerImpl {
 fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
     let serialized_event = serde_json::to_vec(&event).unwrap();
     let event_id = String::from(event_id);
-    let event_envelope = envelope::DomainEventEnvelopeProto {
+    let event_envelope = DomainEventEnvelopeProto {
         id: event_id.to_owned(),
         timestamp: Utc::now().timestamp(),
         transaction_id: Uuid::new_v4().to_string(),
@@ -120,12 +127,18 @@ pub trait InboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>>;
 }
 
-pub struct CommandServiceClient {
+
+pub struct CommandServiceClient<T> {
     service_id: String,
     service_instance_id: u32,
     command_channel: Box<dyn OutboundChannel + Sync + Send>,
-    command_response_channel: Box<dyn InboundChannel + Sync + Send>
+    pending_responses_senders: Arc<Mutex<HashMap<String, Sender<CommandResponse>>>>,
+    pending_responses_receiver: Mutex<HashMap<String, Receiver<CommandResponse>>>,
+    running: Arc<Mutex<bool>>,
+    channel_builder: InboundChannelBuilder<T>
 }
+
+type InboundChannelBuilder<T> = Arc<dyn Fn(Config) -> Box<T> + Sync + Send>;
 
 pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>
@@ -152,9 +165,20 @@ impl EventListener {
     }
 
     pub fn consume(&self, event_message: &[u8]) {
-        let result = envelope::DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
-        let event: Box<dyn Event> = serde_json::from_slice(result.event.as_slice()).unwrap();
-        let handlers = self.handlers.get(result.r#type.as_str());
+        let result = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let result1 = serde_json::from_slice(result.event.as_slice());
+        match result1 {
+            Ok(event) => {
+                self.match_handlers(result.r#type, event);
+            }
+            Err(err) => {
+                error!("Error deserializing event {}", err);
+            }
+        }
+    }
+
+    fn match_handlers(&self, result: String, event: Box<dyn Event>) {
+        let handlers = self.handlers.get(result.as_str());
         match handlers {
             None => {
                 error!("No event handlers found for event type {} and version {}",
@@ -169,52 +193,98 @@ impl EventListener {
     }
 }
 
-impl<'a> CommandServiceClient {
+impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
 
-    pub fn new(service_id: &str, command_channel: Box<dyn OutboundChannel + Sync + Send>, command_response_channel: Box<dyn InboundChannel + Sync + Send>) -> CommandServiceClient {
+    pub fn new(service_id: &str,
+               channel_builder: InboundChannelBuilder<T>,
+               command_channel: Box<dyn OutboundChannel + Sync + Send>) -> CommandServiceClient<T> {
         CommandServiceClient {
             service_id: String::from(service_id),
             service_instance_id: 0u32,
             command_channel,
-            command_response_channel
+            pending_responses_senders: Arc::new(Mutex::new(HashMap::new())),
+            pending_responses_receiver: Mutex::new(HashMap::new()),
+            running: Arc::new(Mutex::new(false)),
+            channel_builder
         }
     }
 
-    pub fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
-        let command_id = Uuid::new_v4().to_string();
-        let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
-        self.command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
-        loop {
-            let response = self.read_response();
-            match response {
-                None => {}
-                Some(result) => {
-                    return result;
+    pub fn start(&mut self, settings: Config) -> JoinHandle<()> {
+        // Clone Arc handles to move into the async block
+        let running = self.running.clone();
+        let pending_responses_senders = self.pending_responses_senders.clone();
+        let channel_reader = self.channel_builder.clone();
+
+        return tokio::task::spawn(async move {
+            let mut channel = channel_reader(settings.clone());
+            loop {
+                let response = CommandServiceClient::read_response(&mut channel);
+                match response {
+                    None => {
+                        info!("No result");
+                    }
+                    Some(result) => {
+                        if let Some(sender) = pending_responses_senders.lock().unwrap().remove(result.1.as_str()) {
+                            debug!("Received response for {}: {}", result.1.as_str(), result.0);
+                            sender.send(result.0).expect("Command could not be delivered");
+                        } else {
+                            error!("Sender not found");
+                        }
+                    }
                 }
             }
-        }
+        })
+    }
+
+    pub async fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> Result<CommandResponse, RecvError> {
+        let command_id = Uuid::new_v4().to_string();
+        let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
+        let (tx, rx) = channel();
+        self.pending_responses_receiver.get_mut().unwrap().insert(command_id.to_owned(), rx);
+        let mut result = self.pending_responses_senders.lock().unwrap();
+        result.insert(command_id.to_owned(), tx);
+
+        self.command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
+
+        return self.pending_responses_receiver.get_mut().unwrap().get_mut(command_id.clone().as_str()).unwrap().await
     }
 
     pub fn send_command_async<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
-        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command.0);
+        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
     }
 
-    fn read_response(&mut self) -> Option<CommandResponse> {
-        let serialized_message = self.command_response_channel.consume();
+    fn read_response(mut command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
+        let serialized_message = command_response_channel.consume();
         return match serialized_message {
             None => {
                 debug!("No response");
                 None
             }
             Some(message) => {
-                let command_response = envelope::CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message)).unwrap();
-                let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response).unwrap();
-                if command_response_result.result.eq("Ok") {
-                    Some(CommandResponse::Ok)
-                } else {
-                    Some(CommandResponse::Error)
+                let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
+                match result {
+                    Ok(command_response) => {
+                        let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
+                        match command_response_result {
+                            Ok(crr) => {
+                                if crr.result.eq("Ok") {
+                                    Some((CommandResponse::Ok, command_response.command_id))
+                                } else {
+                                    Some((CommandResponse::Error, command_response.command_id))
+                                }
+                            }
+                            Err(err) =>  {
+                                error!("{}", err);
+                                None
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!("{}", err);
+                        None
+                    }
                 }
             }
         }
@@ -286,7 +356,7 @@ pub trait Event : Debug {
 }
 
 
-fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> (Vec<u8>, String) {
+fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> Vec<u8> {
     let serialized_command = serde_json::to_vec(command).unwrap();
     let service_instance_id_i32 = service_instance_id as i32;
     let command_id = String::from(command_id);
@@ -301,7 +371,7 @@ fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: 
         subject: command.get_subject().to_owned(),
         command: serialized_command.to_vec()
     };
-    (serialize_protobuf(&command_envelope), command_id)
+    serialize_protobuf(&command_envelope)
 }
 
 fn serialize_command_response_to_protobuf(command_response: CommandResponse,
@@ -318,7 +388,7 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
                 result: command_response.to_string()
             };
             let command_response_serialized = serde_json::to_string(&command_response_result).unwrap();
-            let response_envelope = envelope::CommandResponseEnvelopeProto {
+            let response_envelope = CommandResponseEnvelopeProto {
                 transaction_id: Uuid::new_v4().to_string(),
                 command_id: String::from(command_id),
                 timestamp: Utc::now().timestamp(),
@@ -365,7 +435,7 @@ fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, ev
 #[derive(Debug, Deserialize, Serialize)]
 struct CommandResponseResult {
     entity_id: String,
-    result: String
+    result: String,
 }
 
 #[cfg(test)]
@@ -488,10 +558,15 @@ mod tests {
         let event_channel = CapturingChannel { messages: Vec::new() };
 
         let event_producer = EventProducer::new(&event_channel, "COMMAND-SERVER");
-        let mut command_service_client = CommandServiceClient::new("COMMAND-SERVERIMPORT", Box::new(command_channel), Box::new(command_response_channel));
+        let mut command_service_client = CommandServiceClient::new(
+            "COMMAND-SERVERIMPORT", || {
+                return Box::new(command_response_channel);
+            },
+            Box::new(command_channel)
+        );
         let mut command_service_server = CommandServiceServer::new(&command_store, &event_producer);
 
-        command_service_client.send_command(&command, &mut command_channel);
+        command_service_client.send_command(&command);
 
         command_service_server.consume(&mut command_channel, &mut command_response_channel);
         let command_response = command_service_client.read_response();

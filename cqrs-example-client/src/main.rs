@@ -1,12 +1,11 @@
 use std::{env, io};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use config::Config;
-use cqrs_library::{CommandServiceClient, Command, EventListener, Event};
+use cqrs_library::{CommandServiceClient, Command, EventListener, Event, CommandResponse};
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Deserialize, Serialize};
-use actix_web::{App, error, HttpResponse, HttpServer, post, Responder, web};
-use actix_web::http::header::ContentType;
+use actix_web::{App, HttpResponse, HttpServer, post, Responder, web};
 use log::info;
 use uuid::Uuid;
 
@@ -17,7 +16,7 @@ struct CreateUserCommand {
 }
 
 struct AppState {
-    client: Mutex<CommandServiceClient>,
+    client: Mutex<CommandServiceClient<KafkaInboundChannel>>,
 }
 
 impl Command<'_> for CreateUserCommand {
@@ -32,7 +31,7 @@ impl Command<'_> for CreateUserCommand {
 #[derive(Debug, Deserialize, Serialize)]
 struct UserCreatedEvent {
     user_id: String,
-    user_name: String,
+    name: String,
 }
 
 #[typetag::serde]
@@ -47,30 +46,38 @@ impl Event for UserCreatedEvent {
 }
 
 fn handle_event(event: &dyn Event) {
-    dbg!(event);
-    print!("user created received");
+    info!("{:?}", event);
 }
 
 #[post("/users/{user_id}")]
 async fn post_user(
     command_service_client: web::Data<AppState>,
     user_id: web::Path<String>) -> impl Responder {
-    print!("Creating user {}", user_id);
+    info!("Creating user {}", user_id);
     let command = CreateUserCommand {
         user_id: Uuid::new_v4().to_string(),
         name: String::from(user_id.into_inner()),
     };
+    match command_service_client.client.lock().unwrap().send_command(&command).await {
+        Ok(result) => {
+            if result == CommandResponse::Ok {
+                HttpResponse::Ok().body(command.user_id)
+            } else {
+                HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+            }
+        }
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to send command")
+        }
+    }
+}
 
-    let result = web::block(move || {
-        command_service_client.client
-            .lock()
-            .unwrap()
-            .send_command(&command);
-    }).await.map_err(error::ErrorInternalServerError);
-
-    HttpResponse::Ok()
-        .content_type(ContentType::plaintext())
-        .body(result.unwrap())
+fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
+    return Box::new(KafkaInboundChannel::new(
+        &settings.get_string("service_id").unwrap(),
+        &[&settings.get_string("response_topic").unwrap()],
+        &settings.get_string("bootstrap_server").unwrap(),
+    ))
 }
 
 #[tokio::main]
@@ -114,26 +121,23 @@ async fn main() -> io::Result<()> {
             &settings2.get_string("bootstrap_server").unwrap(),
         );
 
-        let kafka_command_response_channel = KafkaInboundChannel::new(
-            &settings2.get_string("service_id").unwrap(),
-            &[&settings2.get_string("response_topic").unwrap()],
-            &settings2.get_string("bootstrap_server").unwrap(),
-        );
         let command_service_client_data = web::Data::new(
             AppState {
                 client: Mutex::new(
                     CommandServiceClient::new(
                         &settings2.get_string("service_id").unwrap(),
-                        Box::new(kafka_command_channel),
-                        Box::new(kafka_command_response_channel),
+                        Arc::new(create_channel),
+                        Box::new(kafka_command_channel)
                     )
                 )
             }
         );
+        command_service_client_data.client.lock().unwrap().start(settings2);
         App::new()
             .app_data(command_service_client_data.clone())
             .service(post_user)
     }).bind(("127.0.0.1", 8080))?
         .run()
         .await
+
 }
