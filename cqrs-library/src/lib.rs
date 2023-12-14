@@ -9,11 +9,11 @@ use uuid::Uuid;
 use chrono::Utc;
 use config::Config;
 use prost::Message;
-use log::{debug, error};
+use log::{debug, error, info};
 use tokio::sync::oneshot::{channel, Sender, Receiver};
 use tokio::sync::oneshot::error::RecvError;
 use tokio::task::JoinHandle;
-use crate::envelope::DomainEventEnvelopeProto;
+use crate::envelope::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -138,7 +138,7 @@ pub struct CommandServiceClient<T> {
     channel_builder: InboundChannelBuilder<T>
 }
 
-type InboundChannelBuilder<T: InboundChannel + Sync + Send> = Arc<dyn Fn(Config) -> Box<T> + Sync + Send>;
+type InboundChannelBuilder<T> = Arc<dyn Fn(Config) -> Box<T> + Sync + Send>;
 
 pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>
@@ -220,7 +220,9 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
             loop {
                 let response = CommandServiceClient::read_response(&mut channel);
                 match response {
-                    None => {}
+                    None => {
+                        info!("No result");
+                    }
                     Some(result) => {
                         if let Some(sender) = pending_responses_senders.lock().unwrap().remove(result.1.as_str()) {
                             debug!("Received response for {}: {}", result.1.as_str(), result.0);
@@ -229,10 +231,6 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
                             error!("Sender not found");
                         }
                     }
-                }
-                let result1 = running.lock();
-                if !result1.unwrap().to_owned() {
-                   break;
                 }
             }
         })
@@ -265,12 +263,28 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
                 None
             }
             Some(message) => {
-                let command_response = envelope::CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message)).unwrap();
-                let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response).unwrap();
-                if command_response_result.result.eq("Ok") {
-                    Some((CommandResponse::Ok, command_response_result.command_id))
-                } else {
-                    Some((CommandResponse::Error, command_response_result.command_id))
+                let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
+                match result {
+                    Ok(command_response) => {
+                        let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
+                        match command_response_result {
+                            Ok(crr) => {
+                                if crr.result.eq("Ok") {
+                                    Some((CommandResponse::Ok, command_response.command_id))
+                                } else {
+                                    Some((CommandResponse::Error, command_response.command_id))
+                                }
+                            }
+                            Err(err) =>  {
+                                error!("{}", err);
+                                None
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!("{}", err);
+                        None
+                    }
                 }
             }
         }
@@ -371,11 +385,10 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
         Some(command) => {
             let command_response_result = CommandResponseResult {
                 entity_id: command.subject.to_owned(),
-                result: command_response.to_string(),
-                command_id: command_id.to_owned()
+                result: command_response.to_string()
             };
             let command_response_serialized = serde_json::to_string(&command_response_result).unwrap();
-            let response_envelope = envelope::CommandResponseEnvelopeProto {
+            let response_envelope = CommandResponseEnvelopeProto {
                 transaction_id: Uuid::new_v4().to_string(),
                 command_id: String::from(command_id),
                 timestamp: Utc::now().timestamp(),
@@ -423,7 +436,6 @@ fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, ev
 struct CommandResponseResult {
     entity_id: String,
     result: String,
-    command_id: String
 }
 
 #[cfg(test)]
