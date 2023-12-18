@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::Deref;
@@ -47,7 +46,7 @@ impl<'a> CommandStore {
 
 pub struct EventProducerImpl {
     service_id: String,
-    event_channel: Box<dyn OutboundChannel>
+    event_channel: Box<dyn OutboundChannel + Send>
 }
 
 pub trait EventProducer {
@@ -64,7 +63,7 @@ impl EventProducer for EventProducerImpl {
 
 impl<'e> EventProducerImpl {
 
-    pub fn new(service_id: &str, event_channel: Box<dyn OutboundChannel>) -> EventProducerImpl {
+    pub fn new(service_id: &str, event_channel: Box<dyn OutboundChannel + Send>) -> EventProducerImpl {
         EventProducerImpl { service_id: String::from(service_id), event_channel }
     }
 
@@ -134,11 +133,11 @@ pub struct CommandServiceClient<T> {
     command_channel: Box<dyn OutboundChannel + Sync + Send>,
     pending_responses_senders: Arc<Mutex<HashMap<String, Sender<CommandResponse>>>>,
     pending_responses_receiver: Mutex<HashMap<String, Receiver<CommandResponse>>>,
-    running: Arc<Mutex<bool>>,
+    // running: Arc<Mutex<bool>>,
     channel_builder: InboundChannelBuilder<T>
 }
 
-type InboundChannelBuilder<T> = Arc<dyn Fn(Config) -> Box<T> + Sync + Send>;
+type InboundChannelBuilder<T> = Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Box<T> + Sync + Send>>>>;
 
 pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>
@@ -204,31 +203,34 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
             command_channel,
             pending_responses_senders: Arc::new(Mutex::new(HashMap::new())),
             pending_responses_receiver: Mutex::new(HashMap::new()),
-            running: Arc::new(Mutex::new(false)),
+            // running: Arc::new(Mutex::new(false)),
             channel_builder
         }
     }
 
     pub fn start(&mut self, settings: Config) -> JoinHandle<()> {
         // Clone Arc handles to move into the async block
-        let running = self.running.clone();
+        // let running = self.running.clone();
         let pending_responses_senders = self.pending_responses_senders.clone();
         let channel_reader = self.channel_builder.clone();
 
         return tokio::task::spawn(async move {
-            let mut channel = channel_reader(settings.clone());
-            loop {
-                let response = CommandServiceClient::read_response(&mut channel);
-                match response {
-                    None => {
-                        info!("No result");
-                    }
-                    Some(result) => {
-                        if let Some(sender) = pending_responses_senders.lock().unwrap().remove(result.1.as_str()) {
-                            debug!("Received response for {}: {}", result.1.as_str(), result.0);
-                            sender.send(result.0).expect("Command could not be delivered");
-                        } else {
-                            error!("Sender not found");
+            let mut guard = channel_reader.lock().unwrap();
+            if let Some(func) = guard.take() {
+                let mut channel = func(settings);
+                loop {
+                    let response = CommandServiceClient::read_response(&mut channel);
+                    match response {
+                        None => {
+                            info!("No result");
+                        }
+                        Some(result) => {
+                            if let Some(sender) = pending_responses_senders.lock().unwrap().remove(result.1.as_str()) {
+                                debug!("Received response for {}: {}", result.1.as_str(), result.0);
+                                sender.send(result.0).expect("Command could not be delivered");
+                            } else {
+                                error!("Sender not found");
+                            }
                         }
                     }
                 }
@@ -255,7 +257,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
     }
 
-    fn read_response(mut command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
+    fn read_response(command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
         let serialized_message = command_response_channel.consume();
         return match serialized_message {
             None => {
@@ -320,7 +322,7 @@ impl<'a> CommandServiceServer<'a> {
         }
     }
 
-    pub fn consume_async(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
+    pub fn handle_message(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
         let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
         match command_response {
             None => {
@@ -440,11 +442,24 @@ struct CommandResponseResult {
 
 #[cfg(test)]
 mod tests {
-
-    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, CommandServiceServer, Command, EventProducer, Event};
-    use serde::{Serialize, Deserialize, Deserializer, Serializer};
+    use std::sync::{Arc, Mutex};
+    use config::Config;
+    use crate::{CommandAccessor,
+                CommandStore,
+                CommandResponse,
+                CommandServiceClient,
+                OutboundChannel,
+                InboundChannel,
+                CommandServiceServer,
+                Command,
+                EventProducer,
+                Event,
+                EventProducerImpl};
+    use serde::{Serialize, Deserialize};
 
     use log::{debug};
+    use tokio::sync::oneshot;
+    use tokio::sync::oneshot::{Receiver, Sender};
 
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -469,7 +484,7 @@ mod tests {
     }
 
     #[typetag::serde]
-    impl Event<'_> for UserCreatedEvent {
+    impl Event for UserCreatedEvent {
         fn get_id(&self) -> String {
             self.user_id.to_owned()
         }
@@ -483,12 +498,47 @@ mod tests {
         messages: Vec<Vec<u8>>
     }
 
-    impl OutboundChannel for CapturingChannel {
-        fn send(&mut self, _key: Vec<u8>, command: Vec<u8>) {
-            debug!("Adding message");
-            self.messages.push(command);
+
+    struct TokioOutboundChannel {
+        sender: Option<Sender<Vec<u8>>>
+    }
+
+    impl TokioOutboundChannel {
+        fn new(sender: Sender<Vec<u8>>) -> Self {
+            return TokioOutboundChannel {
+                sender: Some(sender)
+            }
         }
     }
+
+    impl OutboundChannel for TokioOutboundChannel {
+        fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
+            if let Some(sender) = self.sender.take() {
+                sender.send(message).expect("Message sending failed");
+            }
+        }
+    }
+
+    struct TokioInboundChannel {
+        receiver: Option<Receiver<Vec<u8>>>
+    }
+
+    impl InboundChannel for TokioInboundChannel {
+        fn consume(&mut self) -> Option<Vec<u8>> {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            return runtime.block_on(async {
+                if let Some(receiver) = self.receiver.take() {
+                    match receiver.await {
+                        Ok(k) => Some(k),
+                        Err(_) => None
+                    }
+                } else  {
+                    None
+                }
+            })
+        }
+    }
+
 
     impl InboundChannel for CapturingChannel {
         fn consume(&mut self) -> Option<Vec<u8>> {
@@ -542,35 +592,54 @@ mod tests {
         CommandResponse::Ok
     }
 
-    #[test]
-    fn test_serialize_command_response() {
+
+    #[tokio::test]
+    async fn test_serialize_command_response() {
 
         let command = TestCreateUserCommand {
             user_id: String::from("user_id"),
             name: String::from("user_name")
         };
 
-        let mut command_store = CommandStore::new("COMMAND-SERVER");
-        command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-        let mut command_channel = CapturingChannel { messages: Vec::new() };
-        let mut command_response_channel = CapturingChannel { messages: Vec::new() };
-        let event_channel = CapturingChannel { messages: Vec::new() };
+        let (tx_command, rx_command) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (tx_command_response, rx_command_response) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (tx_event, _rx_event) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
 
-        let event_producer = EventProducer::new(&event_channel, "COMMAND-SERVER");
+
+        tokio::task::spawn(async move {
+            let mut command_store = CommandStore::new("COMMAND-SERVER");
+            command_store.register_handler("CreateUserCommand", verify_handle_create_user);
+
+            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(tx_event)));
+            let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
+
+            match rx_command.await {
+                Ok(mut k) => {
+                    let mut channel1 = TokioOutboundChannel::new(tx_command_response);
+                    command_service_server.handle_message(&mut k, &mut channel1)
+                }
+                Err(_) => {
+                    assert!(false);
+                }
+            }
+        });
+
         let mut command_service_client = CommandServiceClient::new(
-            "COMMAND-SERVERIMPORT", || {
-                return Box::new(command_response_channel);
-            },
-            Box::new(command_channel)
+            "COMMAND-CLIENT", Arc::new(Mutex::new(Some(Box::new(|_config| {
+                return Box::new(TokioInboundChannel {
+                    receiver: Some(rx_command_response)
+                });
+            })))),
+            Box::new(TokioOutboundChannel::new(tx_command))
         );
-        let mut command_service_server = CommandServiceServer::new(&command_store, &event_producer);
-
-        command_service_client.send_command(&command);
-
-        command_service_server.consume(&mut command_channel, &mut command_response_channel);
-        let command_response = command_service_client.read_response();
-
-        assert_eq!(command_response, CommandResponse::Ok);
+        let config = Config::builder().set_default("a", "b").unwrap().build();
+        command_service_client.start(config.unwrap());
+        match command_service_client.send_command(&command).await {
+            Ok(respose) => {
+                assert_eq!(respose, CommandResponse::Ok)
+            }
+            Err(_) => assert!(false)
+        };
     }
 }
