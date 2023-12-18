@@ -126,7 +126,7 @@ async fn main() -> io::Result<()> {
                 client: Mutex::new(
                     CommandServiceClient::new(
                         &settings2.get_string("service_id").unwrap(),
-                        Arc::new(create_channel),
+                        Arc::new(Mutex::new(Some(Box::new(create_channel)))),
                         Box::new(kafka_command_channel)
                     )
                 )
