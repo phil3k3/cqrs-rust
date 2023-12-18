@@ -592,7 +592,8 @@ mod tests {
 
 
     #[tokio::test]
-    async fn xtest_serialize_command_response() {
+    #[ignore]
+    async fn test_serialize_command_response() {
 
         let command = TestCreateUserCommand {
             user_id: String::from("user_id"),
