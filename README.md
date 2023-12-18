@@ -23,9 +23,7 @@ sequenceDiagram
     'Command Server'-->>'Event Listener B': User 'Bob' created
 ```
 
-
-
-
-# WARNING: Don't use in production
+As this project is still early stage, it's advised not to use it in production-grade environments. 
+Contributions are welcome.
 
 
