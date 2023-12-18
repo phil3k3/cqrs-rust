@@ -12,8 +12,8 @@ log = "0.4.8"
 blockingqueue = "0.1.1"
 futures = "0.3.28"
 
-
 [dev-dependencies]
 testcontainers = "0.15.0"
+testcontainers-modules =  { version = "0.2.0" , features = ["kafka"]}
 env_logger = "0.10.0"
-tokio = { version = "1.35.0", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.35.0", features = ["macros", "rt-multi-thread", "time", "sync"] }

@@ -6,9 +6,9 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::{thread};
     use std::thread::JoinHandle;
-    use futures::SinkExt;
     use log::info;
-    use testcontainers::{clients, images::kafka};
+    use testcontainers::clients;
+    use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
     use cqrs_library::{InboundChannel, OutboundChannel};
     use crate::inbound::KafkaInboundChannel;
     use crate::outbound::KafkaOutboundChannel;
@@ -34,13 +34,13 @@ mod tests {
         info!("Starting transmission test via Kafka");
 
         let docker = clients::Cli::default();
-        let kafka_node = docker.run(kafka::Kafka::default());
+        let kafka_node = docker.run(Kafka::default());
 
         info!("Started Kafka container");
 
         let bootstrap_servers = format!(
             "127.0.0.1:{}",
-            kafka_node.get_host_port_ipv4(kafka::KAFKA_PORT)
+            kafka_node.get_host_port_ipv4(KAFKA_PORT)
         );
 
         info!("{}", bootstrap_servers);

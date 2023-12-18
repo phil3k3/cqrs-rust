@@ -51,11 +51,11 @@ impl KafkaInboundChannel {
             .set("session.timeout.ms", "6000")
             .set("enable.auto.commit", "true")
             .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest");
-            // .set("debug", "consumer,cgrp,topic,fetch");
+            .set("auto.offset.reset", "earliest")
+            .set("debug", "consumer,cgrp,topic,fetch");
 
         // all nodes of the same service are in a group and will get some partitions assigned
-        // config.set_log_level(RDKafkaLogLevel::Debug);
+        config.set_log_level(RDKafkaLogLevel::Debug);
         config.create_with_context(CustomContext {})
     }
 }
@@ -77,11 +77,11 @@ impl StreamKafkaInboundChannel {
             .set("session.timeout.ms", "6000")
             .set("enable.auto.commit", "true")
             .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest");
-            // .set("debug", "consumer,cgrp,topic,fetch");
+            .set("auto.offset.reset", "earliest")
+            .set("debug", "consumer,cgrp,topic,fetch");
 
         // all nodes of the same service are in a group and will get some partitions assigned
-        // config.set_log_level(RDKafkaLogLevel::Debug);
+        config.set_log_level(RDKafkaLogLevel::Debug);
         config.create_with_context(CustomContext {})
     }
 

@@ -100,7 +100,7 @@ async fn main() {
                         debug!("No message!");
                     }
                     Some(mut message) => {
-                        command_service_server.consume_async(&mut message, &mut command_response_channel);
+                        command_service_server.handle_message(&mut message, &mut command_response_channel);
                     }
                 }
             }
