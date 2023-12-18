@@ -442,6 +442,7 @@ struct CommandResponseResult {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::sync::{Arc, Mutex};
     use config::Config;
     use crate::{CommandAccessor,
@@ -525,17 +526,14 @@ mod tests {
 
     impl InboundChannel for TokioInboundChannel {
         fn consume(&mut self) -> Option<Vec<u8>> {
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            return runtime.block_on(async {
-                if let Some(receiver) = self.receiver.take() {
-                    match receiver.await {
-                        Ok(k) => Some(k),
-                        Err(_) => None
-                    }
-                } else  {
-                    None
+            if let Some(receiver) = self.receiver.take() {
+                match receiver.blocking_recv() {
+                    Ok(k) => Some(k),
+                    Err(_) => None
                 }
-            })
+            } else  {
+                None
+            }
         }
     }
 
@@ -594,13 +592,18 @@ mod tests {
 
 
     #[tokio::test]
-    async fn test_serialize_command_response() {
+    async fn xtest_serialize_command_response() {
 
         let command = TestCreateUserCommand {
             user_id: String::from("user_id"),
             name: String::from("user_name")
         };
 
+        if env::var("RUST_LOG").is_err() {
+            env::set_var("RUST_LOG", "debug")
+        }
+
+        env_logger::init();
 
         let (tx_command, rx_command) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
         let (tx_command_response, rx_command_response) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
@@ -616,7 +619,9 @@ mod tests {
 
             match rx_command.await {
                 Ok(mut k) => {
-                    let mut channel1 = TokioOutboundChannel::new(tx_command_response);
+                    let mut channel1 = TokioOutboundChannel {
+                        sender: Some(tx_command_response)
+                    };
                     command_service_server.handle_message(&mut k, &mut channel1)
                 }
                 Err(_) => {
