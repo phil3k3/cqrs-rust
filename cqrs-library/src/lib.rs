@@ -454,17 +454,7 @@ mod tests {
     use std::env;
     use std::sync::Arc;
     use config::Config;
-    use crate::{CommandAccessor,
-                CommandStore,
-                CommandResponse,
-                CommandServiceClient,
-                OutboundChannel,
-                InboundChannel,
-                CommandServiceServer,
-                Command,
-                EventProducer,
-                Event,
-                EventProducerImpl};
+    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, CommandServiceServer, Command, EventProducer, Event, EventProducerImpl, EventListener};
     use serde::{Serialize, Deserialize};
 
     use log::debug;
@@ -615,22 +605,21 @@ mod tests {
 
         env_logger::init();
 
-        let (tx_command, rx_command) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
-        let (tx_command_response, rx_command_response) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
-        let (tx_event, _rx_event) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (command_sender, command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (response_sender, response_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (event_sender, _event_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
 
-
-        let handle = tokio::task::spawn(async move {
+        let server_handle = tokio::task::spawn(async move {
             let mut command_store = CommandStore::new("COMMAND-SERVER");
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(tx_event)));
+            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(event_sender)));
             let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
 
-            match rx_command.await {
+            match command_receiver.await {
                 Ok(mut k) => {
                     let mut channel1 = TokioOutboundChannel {
-                        sender: Some(tx_command_response)
+                        sender: Some(response_sender)
                     };
                     command_service_server.handle_message(&mut k, &mut channel1)
                 }
@@ -643,16 +632,18 @@ mod tests {
         let mut command_service_client = CommandServiceClient::new(
             "COMMAND-CLIENT", Arc::new(tokio::sync::Mutex::new(Some(Box::new(|_config| {
                 return Box::new(TokioInboundChannel {
-                    receiver: Some(rx_command_response)
+                    receiver: Some(response_receiver)
                 });
             })))),
-            Box::new(TokioOutboundChannel::new(tx_command))
+            Box::new(TokioOutboundChannel::new(command_sender))
         );
+
         let config = Config::builder().set_default("a", "b").unwrap().build();
-        let handle2 = command_service_client.start(config.unwrap());
-        let response = command_service_client.send_command(&command).await;
-        assert_eq!(response, CommandResponse::Ok);
-        handle2.abort();
-        handle.abort();
+        let client_handle = command_service_client.start(config.unwrap());
+        let actual_command_response = command_service_client.send_command(&command).await;
+        assert_eq!(actual_command_response, CommandResponse::Ok);
+
+        client_handle.abort();
+        server_handle.abort();
     }
 }

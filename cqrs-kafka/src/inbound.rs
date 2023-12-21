@@ -100,7 +100,7 @@ impl StreamKafkaInboundChannel {
                 let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
                 println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
                          key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
-                Ok(())  // Important to return Ok(()) for successful processing
+                Ok(())
             }
         }).await.expect("Stream processing failed");
     }

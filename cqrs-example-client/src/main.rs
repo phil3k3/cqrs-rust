@@ -93,8 +93,8 @@ async fn main() -> io::Result<()> {
         let mut event_listener = EventListener::new();
         event_listener.register_handler("UserCreatedEvent", handle_event);
 
-        let x = &settings.get_string("service_subscriptions").unwrap();
-        let topics = x.split(",").collect::<Vec<&str>>();
+        let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
+        let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
@@ -105,28 +105,28 @@ async fn main() -> io::Result<()> {
     });
 
     HttpServer::new(|| {
-        let settings2 = Config::builder()
+        let settings_inner = Config::builder()
             .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
             .build()
             .unwrap();
 
         let kafka_command_channel = KafkaOutboundChannel::new(
-            &settings2.get_string("command_topic").unwrap(),
-            &settings2.get_string("bootstrap_server").unwrap(),
+            &settings_inner.get_string("command_topic").unwrap(),
+            &settings_inner.get_string("bootstrap_server").unwrap(),
         );
 
         let command_service_client_data = web::Data::new(
             AppState {
                 client: Mutex::new(
                     CommandServiceClient::new(
-                        &settings2.get_string("service_id").unwrap(),
+                        &settings_inner.get_string("service_id").unwrap(),
                         Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
                         Box::new(kafka_command_channel),
                     )
                 )
             }
         );
-        command_service_client_data.client.lock().unwrap().start(settings2);
+        command_service_client_data.client.lock().unwrap().start(settings_inner);
         App::new()
             .app_data(command_service_client_data.clone())
             .service(post_user)
