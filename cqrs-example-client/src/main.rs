@@ -58,17 +58,11 @@ async fn post_user(
         user_id: Uuid::new_v4().to_string(),
         name: String::from(user_id.into_inner()),
     };
-    match command_service_client.client.lock().unwrap().send_command(&command).await {
-        Ok(result) => {
-            if result == CommandResponse::Ok {
-                HttpResponse::Ok().body(command.user_id)
-            } else {
-                HttpResponse::InternalServerError().body("Failed to process command, check server logs")
-            }
-        }
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to send command")
-        }
+    let result = command_service_client.client.lock().unwrap().send_command(&command).await;
+    if result == CommandResponse::Ok {
+        HttpResponse::Ok().body(command.user_id)
+    } else {
+        HttpResponse::InternalServerError().body("Failed to process command, check server logs")
     }
 }
 
@@ -77,7 +71,7 @@ fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
         &settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-    ))
+    ));
 }
 
 #[tokio::main]
@@ -126,8 +120,8 @@ async fn main() -> io::Result<()> {
                 client: Mutex::new(
                     CommandServiceClient::new(
                         &settings2.get_string("service_id").unwrap(),
-                        Arc::new(Mutex::new(Some(Box::new(create_channel)))),
-                        Box::new(kafka_command_channel)
+                        Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
+                        Box::new(kafka_command_channel),
                     )
                 )
             }
@@ -139,5 +133,4 @@ async fn main() -> io::Result<()> {
     }).bind(("127.0.0.1", 8080))?
         .run()
         .await
-
 }
