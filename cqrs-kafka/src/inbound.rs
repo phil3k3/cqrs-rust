@@ -5,7 +5,7 @@ use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
-use cqrs_library::{EventListener, InboundChannel};
+use cqrs_library::{EventListener, InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
 
 struct CustomContext;
 
@@ -93,10 +93,22 @@ impl StreamKafkaInboundChannel {
         }
     }
 
-    pub async fn consume_async_blocking(&self, event_listener: &EventListener) {
+    pub async fn consume_async_blocking_consumer(&self, message_consumer: Box<dyn MessageConsumer>) {
         return self.consumer.stream().try_for_each(|borrowed_message| {
             async move {
-                event_listener.consume(borrowed_message.payload().unwrap());
+                message_consumer.consume(borrowed_message.payload().unwrap());
+                let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
+                println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
+                         key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
+                Ok(())
+            }
+        }).await.expect("Stream processing failed");
+    }
+
+    pub async fn consume_async_blocking(&self, mut message_consumer: Box<dyn MessageProcessor>, outbound_channel: &mut Box<dyn OutboundChannel + Send + Sync>) {
+        return self.consumer.stream().try_for_each(|borrowed_message| {
+            async move {
+                message_consumer.consume(borrowed_message.payload().unwrap(), outbound_channel);
                 let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
                 println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
                          key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());

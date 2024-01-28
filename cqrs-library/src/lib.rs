@@ -107,7 +107,7 @@ impl<'a> CommandAccessor<'a> {
         CommandAccessor { serialized_command, command_id: command_id, command_metadata: None }
     }
 
-    pub fn get_command<T: Deserialize<'a> + Command<'a>>(&mut self) -> Box<T> {
+    pub fn get_command<T: Deserialize<'a> + CommandEnvelope<'a>>(&mut self) -> Box<T> {
         let slice = self.serialized_command.as_slice();
         let command = serde_json::from_slice::<T>(slice).unwrap();
         self.command_metadata = Some(CommandMetadata {
@@ -144,7 +144,30 @@ pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>
 }
 
+pub trait MessageProcessor {
+    fn consume(&mut self, event_message: &[u8], output_channel: &mut Box<dyn OutboundChannel + Send + Sync>);
+}
+
+pub trait MessageConsumer {
+    fn consume(&self, event_message: &[u8]);
+}
+
 type EventHandlerFn = fn(&dyn Event) -> ();
+
+impl MessageConsumer for EventListener {
+    fn consume(&self, event_message: &[u8]) {
+        let result = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let result1 = serde_json::from_slice(result.event.as_slice());
+        match result1 {
+            Ok(event) => {
+                self.match_handlers(result.r#type, event);
+            }
+            Err(err) => {
+                error!("Error deserializing event {}", err);
+            }
+        }
+    }
+}
 
 impl EventListener {
 
@@ -164,18 +187,6 @@ impl EventListener {
         vec.push(handler);
     }
 
-    pub fn consume(&self, event_message: &[u8]) {
-        let result = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
-        let result1 = serde_json::from_slice(result.event.as_slice());
-        match result1 {
-            Ok(event) => {
-                self.match_handlers(result.r#type, event);
-            }
-            Err(err) => {
-                error!("Error deserializing event {}", err);
-            }
-        }
-    }
 
     fn match_handlers(&self, result: String, event: Box<dyn Event>) {
         let handlers = self.handlers.get(result.as_str());
@@ -242,7 +253,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         })
     }
 
-    pub async fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
+    pub async fn send_command<C: CommandEnvelope<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
         let (tx, rx) = channel();
@@ -260,7 +271,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         }
     }
 
-    pub fn send_command_async<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
+    pub fn send_command_async<C: CommandEnvelope<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
@@ -307,6 +318,18 @@ pub struct CommandServiceServer<'c> {
     event_producer: &'c mut EventProducerImpl
 }
 
+impl<'command_server> MessageProcessor for CommandServiceServer<'command_server> {
+    fn consume(&mut self, event_message: &[u8], output_channel: &mut Box<dyn OutboundChannel + Send + Sync>) {
+        let command_response = handle_command(&Vec::from(event_message), &self.command_store, &mut self.event_producer);
+        match command_response {
+            None => {}
+            Some(response) => {
+                output_channel.send("".as_bytes().to_vec(), response);
+            }
+        }
+    }
+}
+
 impl<'a> CommandServiceServer<'a> {
 
     pub fn new(command_store: &'a CommandStore, event_producer: &'a mut EventProducerImpl) -> Box<CommandServiceServer<'a>> {
@@ -330,30 +353,25 @@ impl<'a> CommandServiceServer<'a> {
             }
         }
     }
-
-    pub fn handle_message(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
-        let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
-        match command_response {
-            None => {
-                error!("No command response")
-            }
-            Some(command_response) => {
-                command_response_channel.send("".as_bytes().to_vec(), command_response);
-            }
-        }
-    }
-
 }
 
 
-
-pub trait Command<'de> : Deserialize<'de> + Serialize {
+pub trait Command {
     fn get_subject(&self) -> String;
     fn get_type(&self) -> String;
     fn get_version(&self) -> i32 {
         1
     }
 }
+
+pub trait CommandEnvelope<'command> : Deserialize<'command> + Serialize {
+    fn get_subject(&self) -> String;
+    fn get_type(&self) -> String;
+    fn get_version(&self) -> i32 {
+        1
+    }
+}
+
 
 #[typetag::serde(tag = "type")]
 pub trait Event : Debug {
@@ -367,7 +385,7 @@ pub trait Event : Debug {
 }
 
 
-fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> Vec<u8> {
+fn serialize_command_to_protobuf<'a, C: CommandEnvelope<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> Vec<u8> {
     let serialized_command = serde_json::to_vec(command).unwrap();
     let service_instance_id_i32 = service_instance_id as i32;
     let command_id = String::from(command_id);
@@ -499,12 +517,12 @@ mod tests {
     }
 
 
-    struct TokioOutboundChannel {
+    pub(crate) struct TokioOutboundChannel {
         sender: Option<Sender<Vec<u8>>>
     }
 
     impl TokioOutboundChannel {
-        fn new(sender: Sender<Vec<u8>>) -> Self {
+        pub(crate) fn new(sender: Sender<Vec<u8>>) -> Self {
             return TokioOutboundChannel {
                 sender: Some(sender)
             }

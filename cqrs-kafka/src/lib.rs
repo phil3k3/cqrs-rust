@@ -1,5 +1,6 @@
 pub mod inbound;
 pub mod outbound;
+mod aggregate;
 
 #[cfg(test)]
 mod tests {

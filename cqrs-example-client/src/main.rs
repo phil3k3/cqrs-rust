@@ -58,7 +58,10 @@ async fn post_user(
         user_id: Uuid::new_v4().to_string(),
         name: String::from(user_id.into_inner()),
     };
-    let result = command_service_client.client.lock().unwrap().send_command(&command).await;
+    let result = command_service_client.client
+        .lock()
+        .unwrap()
+        .send_command(&command).await;
     if result == CommandResponse::Ok {
         HttpResponse::Ok().body(command.user_id)
     } else {
@@ -101,7 +104,7 @@ async fn main() -> io::Result<()> {
             &settings.get_string("bootstrap_server").unwrap(),
         );
 
-        kafka_event_listener_channel.consume_async_blocking(&event_listener).await;
+        kafka_event_listener_channel.consume_async_blocking_consumer(&event_listener).await;
     });
 
     HttpServer::new(|| {
