@@ -55,11 +55,11 @@ fn create_admin_client(bootstrap_server: String) -> Result<AdminClient<ProducerC
 
 
 impl KafkaOutboundChannel {
-    pub fn new(topic: &str, bootstrap_server: &str) -> KafkaOutboundChannel {
+    pub fn new(topic: String, bootstrap_server: String) -> KafkaOutboundChannel {
         KafkaOutboundChannel {
-            topic: topic.to_owned(),
-            producer: create_producer(bootstrap_server.to_string()).unwrap(),
-            admin_client: create_admin_client(bootstrap_server.to_string()).unwrap()
+            topic,
+            producer: create_producer(bootstrap_server.clone()).unwrap(),
+            admin_client: create_admin_client(bootstrap_server.clone()).unwrap()
         }
     }
 

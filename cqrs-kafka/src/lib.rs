@@ -1,6 +1,10 @@
 pub mod inbound;
 pub mod outbound;
 mod aggregate;
+mod command;
+mod event;
+
+mod carrier;
 
 #[cfg(test)]
 mod tests {
@@ -26,7 +30,6 @@ mod tests {
     }
 
 
-
     #[tokio::test]
     async fn test_sync_send_receive() {
 
@@ -45,11 +48,11 @@ mod tests {
         );
 
         info!("{}", bootstrap_servers);
-        let mut outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers);
+        let mut outbound_channel = KafkaOutboundChannel::new(String::from("TEST"), bootstrap_servers.clone());
 
         outbound_channel.create_topic("TEST").await;
 
-        let mut inbound_channel = KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers);
+        let mut inbound_channel = KafkaInboundChannel::new(String::from("TEST_IN"), &["TEST"], bootstrap_servers.clone());
 
         inbound_channel.consume();
 

@@ -1,15 +1,17 @@
 use std::error::Error;
+use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use config::Config;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{Command, CommandServiceServer, CommandStore, Event, EventProducerImpl, OutboundChannel};
-use crate::inbound::StreamKafkaInboundChannel;
+use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, OutboundChannel, SerializableCommand};
+use crate::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
+use crate::outbound::KafkaOutboundChannel;
 
 
 #[async_trait]
-trait Aggregate<'de> : Default + Serialize + Deserialize<'de> + Sync + Send {
-    type Command;
+trait Aggregate<'aggregate> : Default + Serialize + Deserialize<'aggregate> + Sync + Send {
+    type Command : SerializableCommand<'aggregate>;
     type Event: Event;
     async fn handle(command: Self::Command) -> Result<Vec<Box<dyn Event>>, Box<dyn Error>>;
     fn apply(event: Box<dyn Event>);
@@ -20,14 +22,15 @@ struct CqrsFramework<AGGREGATE> {
 }
 
 impl<AGGREGATE> CqrsFramework<AGGREGATE> {
-    pub fn start(&self, settings: Config,
-                 service_id: &str,
-                 event_channel: Box<dyn OutboundChannel + Send>,
-                 mut response_channel: Box<dyn OutboundChannel + Send + Sync>) -> JoinHandle<()> {
-        return tokio::task::spawn(|| {
-            let mut event_producer = EventProducerImpl::new(service_id, Box::new(event_channel));
-            let command_store = CommandStore::new(service_id);
-            let command_server: Box<CommandServiceServer> = CommandServiceServer::new(&command_store, &mut event_producer);
+    pub async fn start(&self, settings: Config,
+                       service_id: String,
+                       event_channel: Box<dyn OutboundChannel + Send>,
+                       response_channel: Arc<Mutex<dyn OutboundChannel + Send + Sync>>) -> JoinHandle<()> {
+        let response_channel_cloned = response_channel.clone();
+        return tokio::task::spawn_blocking( move || {
+            let event_producer = EventProducerImpl::new(service_id.to_owned(),event_channel);
+            let command_store = CommandStore::new(service_id.to_owned());
+            let command_server: CommandServiceServer = CommandServiceServer::new(command_store, event_producer);
 
             // I need to reach out to kafka and get the data from there
             let input_channel = StreamKafkaInboundChannel::new(
@@ -35,12 +38,12 @@ impl<AGGREGATE> CqrsFramework<AGGREGATE> {
                 &[&settings.get_string("topics").unwrap()],
                 &settings.get_string("bootstrap_server").unwrap()
             );
-            return input_channel.consume_async_blocking(command_server, &mut response_channel);
-        })
+            input_channel.consume_async_blocking(Arc::new(Mutex::new(command_server)), response_channel_cloned);
+        });
     }
 }
 
-impl<AGGREGATE> CqrsFramework<AGGREGATE> {
+impl<AGGREGATE: Default> CqrsFramework<AGGREGATE> {
 
     pub fn new() -> CqrsFramework<AGGREGATE> {
         return CqrsFramework {
@@ -50,37 +53,84 @@ impl<AGGREGATE> CqrsFramework<AGGREGATE> {
 }
 
 struct CqrsClient {
-
+    command_sender: CommandSender
 }
 
+struct CommandSender {
+    command_service_client: CommandServiceClient<KafkaInboundChannel, KafkaOutboundChannel>
+}
+
+impl CommandSender{
+    pub async fn send<'aggregate, A : Aggregate<'aggregate>>(&mut self, command: A::Command) -> CommandResponse {
+        let result = self.command_service_client.send_command(&command).await;
+        return result;
+    }
+}
+
+
 impl CqrsClient {
-    pub fn new() -> Self {
-        return CqrsClient {};
+    pub fn new(settings: Config) -> Self {
+        let command_service_client = CommandServiceClient::new(settings.clone(),
+                                                               Arc::new(tokio::sync::Mutex::new(Some(Box::new(|config| {
+                                                                   let service_id = config.get_string("service_id").unwrap();
+                                                                   let bootstrap_servers = config.get_string("bootstrap_server").unwrap();
+                                                                   Box::new(KafkaInboundChannel::new(
+                                                                       service_id,
+                                                                       &[config.get_string("response_topic").unwrap().as_str()],
+                                                                       bootstrap_servers
+                                                                   ))
+                                                               })))),
+                                                               Arc::new(tokio::sync::Mutex::new(Some(Box::new(|config: Config| {
+                                                                   let service_id = config.get_string("service_id").unwrap();
+                                                                   let bootstrap_servers = config.get_string("bootstrap_server").unwrap();
+                                                                   Box::new(KafkaOutboundChannel::new(service_id, bootstrap_servers))
+                                                               })))));
+        return CqrsClient { command_sender: CommandSender { command_service_client } };
+    }
+
+    pub async fn send_command<'aggregate, A: Aggregate<'aggregate>>(&self, _command: A::Command) -> CommandResponse {
+        return CommandResponse::Ok;
     }
 }
 
 struct CqrsQuery {
-
+    event_listener: Arc<Mutex<Option<Box<EventListener>>>>
 }
 
 impl CqrsQuery {
-    pub fn new(x: &str, x0: fn(Box<dyn Event>)) {
-
+    pub fn new(event_type: &str, event_handler: EventHandlerFn) -> Self {
+        let mut event_listener = EventListener::new();
+        event_listener.register_handler(event_type, event_handler);
+        return CqrsQuery {
+            event_listener: Arc::new(Mutex::new(Some(Box::new(event_listener))))
+        };
     }
 
-    pub fn start(&self) {
+    pub fn start(self, settings: Config) {
+        tokio::spawn(async move {
+            let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
+            let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
+            let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
+                settings.get_string("service_id").unwrap(),
+                topics.as_slice(),
+                &settings.get_string("bootstrap_server").unwrap(),
+            );
 
+            kafka_event_listener_channel.consume_async_blocking_consumer(self.event_listener).await;
+        });
     }
 }
 
 #[cfg(test)]
 mod test {
     use std::error::Error;
+    use std::sync::{Arc, Mutex};
+    use async_trait::async_trait;
     use config::{Config, ConfigError};
     use serde::{Deserialize, Serialize};
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
-    use cqrs_library::{Command, CommandResponse, Event};
+    use cqrs_library::{CommandResponse, Event, OutboundChannel, SerializableCommand};
     use crate::aggregate::{Aggregate, CqrsClient, CqrsFramework, CqrsQuery};
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -123,7 +173,7 @@ mod test {
         }
     }
 
-    impl Command for UserCommand {
+    impl<'command> SerializableCommand<'command> for UserCommand {
         fn get_subject(&self) -> String {
            let command_subject: &str = match self {
                UserCommand::Create { user_id } => user_id,
@@ -141,15 +191,16 @@ mod test {
         }
     }
 
+    #[async_trait]
     impl<'aggregate> Aggregate<'aggregate> for User {
         type Command = UserCommand;
         type Event = UserEvent;
 
-        async fn handle(command: Self::Command) -> Result<Vec<Box<dyn Event>>, Box<dyn Error>> {
+        async fn handle(_command: Self::Command) -> Result<Vec<Box<dyn Event>>, Box<dyn Error>> {
             return Err(Box::new(ConfigError::NotFound(String::new())));
         }
 
-        fn apply(event: Box<dyn Event>) {
+        fn apply(_event: Box<dyn Event>) {
 
         }
     }
@@ -162,7 +213,7 @@ mod test {
         }
     }
 
-    fn handle_user_created(event: UserEvent) {
+    fn handle_user_created(_event: &dyn Event) {
         print!("User created");
     }
 
@@ -178,17 +229,28 @@ mod test {
         }
     }
 
+    impl OutboundChannel for TokioOutboundChannel {
+        fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
+            if let Some(sender) = self.sender.take() {
+                sender.send(message).expect("Message sending failed");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_use_framework() {
         let framework = CqrsFramework::<User>::new();
 
-        let (event_sender, _event_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
-        let (response_sender, _response_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (event_sender, event_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (response_sender, response_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (command_sender, command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
 
         let settings = Config::default();
         let event_channel = TokioOutboundChannel::new(event_sender);
         let response_channel = TokioOutboundChannel::new(response_sender);
-        let handle = framework.start(settings, "TEST_SERVICE", Box::new(event_channel), Box::new(response_channel));
+        let handle = framework.start(settings.clone(), String::from("TEST_SERVICE"),
+                                     Box::new(event_channel),
+                                     Arc::new(Mutex::new(response_channel)));
 
         // on the server side I need to start a runtime which listens to commands
         // each time a command arrives, it passes it to a command handler of the
@@ -196,17 +258,18 @@ mod test {
         // back to the command response channel, the events are written to the events channel
         // then the explicit transaction finishes
 
-        let event_listener = CqrsQuery::new("UserCreated", handle_user_created);
-        event_listener.start();
+        let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created);
+        cqrs_query.start(settings.clone());
 
-        let client = CqrsClient::new();
-        let response = client.send_command(UserCommand::Create {
+        let client = CqrsClient::new(settings.clone());
+        let response = client.send_command::<User>(UserCommand::Create {
             user_id: "1".to_string()
         }).await;
 
+
         assert_eq!(CommandResponse::Ok, response);
 
-        handle.abort();
+        handle.await.abort_handle();
     }
 
 }

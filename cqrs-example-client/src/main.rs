@@ -16,7 +16,7 @@ struct CreateUserCommand {
 }
 
 struct AppState {
-    client: Mutex<CommandServiceClient<KafkaInboundChannel>>,
+    client: Mutex<CommandServiceClient<KafkaInboundChannel, KafkaOutboundChannel>>,
 }
 
 impl Command<'_> for CreateUserCommand {
@@ -69,11 +69,18 @@ async fn post_user(
     }
 }
 
-fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
+fn create_inbound_channel(settings: Config) -> Box<KafkaInboundChannel> {
     return Box::new(KafkaInboundChannel::new(
-        &settings.get_string("service_id").unwrap(),
+        settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
-        &settings.get_string("bootstrap_server").unwrap(),
+        settings.get_string("bootstrap_server").unwrap(),
+    ));
+}
+
+fn create_outbound_channel(settings: Config) -> Box<KafkaOutboundChannel> {
+    return Box::new(KafkaOutboundChannel::new(
+        settings.get_string("response_topic").unwrap(),
+        settings.get_string("bootstrap_server").unwrap(),
     ));
 }
 
@@ -99,12 +106,12 @@ async fn main() -> io::Result<()> {
         let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
-            &settings.get_string("service_id").unwrap(),
+            String::from(settings.get_string("service_id").unwrap()),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
         );
 
-        kafka_event_listener_channel.consume_async_blocking_consumer(&event_listener).await;
+        kafka_event_listener_channel.consume_async_blocking_consumer(Arc::new(Mutex::new::Some(Box::new(event_listener)))).await;
     });
 
     HttpServer::new(|| {
@@ -114,22 +121,21 @@ async fn main() -> io::Result<()> {
             .unwrap();
 
         let kafka_command_channel = KafkaOutboundChannel::new(
-            &settings_inner.get_string("command_topic").unwrap(),
-            &settings_inner.get_string("bootstrap_server").unwrap(),
+            settings_inner.get_string("command_topic").unwrap(),
+            settings_inner.get_string("bootstrap_server").unwrap(),
         );
 
         let command_service_client_data = web::Data::new(
             AppState {
                 client: Mutex::new(
-                    CommandServiceClient::new(
-                        &settings_inner.get_string("service_id").unwrap(),
-                        Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
-                        Box::new(kafka_command_channel),
+                    CommandServiceClient::new(settings.clone(),
+                        Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_inbound_channel)))),
+                        Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_outbound_channel))))
                     )
                 )
             }
         );
-        command_service_client_data.client.lock().unwrap().start(settings_inner);
+        command_service_client_data.client.lock().unwrap().start();
         App::new()
             .app_data(command_service_client_data.clone())
             .service(post_user)

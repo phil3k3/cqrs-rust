@@ -1,11 +1,13 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
 use futures::TryStreamExt;
 use log::info;
 use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
-use cqrs_library::{EventListener, InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
+use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
 
 struct CustomContext;
 
@@ -36,11 +38,11 @@ pub struct StreamKafkaInboundChannel {
 }
 
 impl KafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> KafkaInboundChannel {
+    pub fn new(service_id: String, topics: &[&str], bootstrap_server: String) -> KafkaInboundChannel {
         let channel = KafkaInboundChannel {
-            consumer: KafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string()).unwrap()
+            consumer: KafkaInboundChannel::create_consumer(bootstrap_server, service_id).unwrap()
         };
-        channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
+        channel.consumer.subscribe(topics).expect("Could not subscribe");
         channel
     }
     fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingConsumer, KafkaError> {
@@ -61,7 +63,7 @@ impl KafkaInboundChannel {
 }
 
 impl StreamKafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> StreamKafkaInboundChannel {
+    pub fn new(service_id: String, topics: &[&str], bootstrap_server: &str) -> StreamKafkaInboundChannel {
         let channel = StreamKafkaInboundChannel {
             consumer: StreamKafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string()).unwrap()
         };
@@ -93,22 +95,36 @@ impl StreamKafkaInboundChannel {
         }
     }
 
-    pub async fn consume_async_blocking_consumer(&self, message_consumer: Box<dyn MessageConsumer>) {
+    pub async fn consume_async_blocking_consumer<MessageConsumerParam: MessageConsumer + Sync + Send>(&self, message_consumer: Arc<Mutex<Option<Box<MessageConsumerParam>>>>) {
+        let message_consumer_cloned = message_consumer.clone();
         return self.consumer.stream().try_for_each(|borrowed_message| {
+            let message_consumer_cloned_2 = message_consumer_cloned.clone();
             async move {
-                message_consumer.consume(borrowed_message.payload().unwrap());
-                let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
-                println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
-                         key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
-                Ok(())
+                let arc = message_consumer_cloned_2.clone();
+                let result = arc.lock();
+                let mut guard = result.unwrap();
+                if let Some(var) = guard.take() {
+                    var.consume(borrowed_message.payload().unwrap());
+                    let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
+                    println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
+                             key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
+                    Ok(())
+                }
+                else {
+                    Ok(())
+                }
             }
         }).await.expect("Stream processing failed");
     }
 
-    pub async fn consume_async_blocking(&self, mut message_consumer: Box<dyn MessageProcessor>, outbound_channel: &mut Box<dyn OutboundChannel + Send + Sync>) {
-        return self.consumer.stream().try_for_each(|borrowed_message| {
+    pub async fn consume_async_blocking<MessageProcessorParam:  MessageProcessor + Send>(&self, message_consumer: Arc<Mutex<MessageProcessorParam>>, outbound_channel: Arc<Mutex<dyn OutboundChannel + Send + Sync>>) {
+        let message_consumer_cloned = message_consumer;
+        let outbound_channel_cloned = outbound_channel.clone();
+        self.consumer.stream().try_for_each(|borrowed_message| {
+            let message_consumer_cloned_2 = message_consumer_cloned.clone();
+            let outbound_channel_cloned_2 = outbound_channel_cloned.clone();
             async move {
-                message_consumer.consume(borrowed_message.payload().unwrap(), outbound_channel);
+                message_consumer_cloned_2.clone().lock().unwrap().consume(borrowed_message.payload().unwrap(), outbound_channel_cloned_2);
                 let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
                 println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
                          key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
