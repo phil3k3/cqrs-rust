@@ -1,10 +1,32 @@
+use std::sync::{Arc, Mutex};
+use async_trait::async_trait;
+use config::Config;
+use cqrs_library::{InboundChannelBuilder, MessageProcessor, OutboundChannel};
+
 pub mod inbound;
 pub mod outbound;
 mod aggregate;
 mod command;
 mod event;
-
 mod carrier;
+
+#[async_trait]
+pub trait StreamInboundChannel {
+    async fn consume_async_blocking(&self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
+}
+
+pub trait ServerCarrier {
+    fn get_event_channel(&self) -> Arc<Mutex<dyn OutboundChannel + Sync + Send>>;
+
+     fn get_command_channel(&self, settings: Config) -> Box<dyn StreamInboundChannel + Sync + Send>;
+
+     fn get_response_channel(&self, settings: Config) -> Box<dyn OutboundChannel + Sync + Send>;
+}
+
+pub trait ClientCarrier<T> {
+    fn get_event_inbound_channel_builder(&self) -> InboundChannelBuilder<T>;
+}
+
 
 #[cfg(test)]
 mod tests {

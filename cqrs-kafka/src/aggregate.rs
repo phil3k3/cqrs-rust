@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use config::Config;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, OutboundChannel, SerializableCommand};
+use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, SerializableCommand};
+use crate::ServerCarrier;
 use crate::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
 use crate::outbound::KafkaOutboundChannel;
 
@@ -17,37 +18,37 @@ trait Aggregate<'aggregate> : Default + Serialize + Deserialize<'aggregate> + Sy
     fn apply(event: Box<dyn Event>);
 }
 
-struct CqrsFramework<AGGREGATE> {
-    aggregate: AGGREGATE
+struct CqrsFramework<AGGREGATE, CARRIER> {
+    aggregate: AGGREGATE,
+    carrier: CARRIER
 }
 
-impl<AGGREGATE> CqrsFramework<AGGREGATE> {
-    pub async fn start(&self, settings: Config,
-                       service_id: String,
-                       event_channel: Box<dyn OutboundChannel + Send>,
-                       response_channel: Arc<Mutex<dyn OutboundChannel + Send + Sync>>) -> JoinHandle<()> {
-        let response_channel_cloned = response_channel.clone();
+
+
+
+impl<AGGREGATE: Sync, CARRIER: ServerCarrier + Sync + Send + 'static> CqrsFramework<AGGREGATE, CARRIER> {
+    pub async fn start(self,
+                       settings: Config,
+                       service_id: String) -> JoinHandle<()> {
         return tokio::task::spawn_blocking( move || {
-            let event_producer = EventProducerImpl::new(service_id.to_owned(),event_channel);
+            let arc = self.carrier.get_event_channel().clone();
+            let event_producer = EventProducerImpl::new(service_id.to_owned(), arc);
             let command_store = CommandStore::new(service_id.to_owned());
             let command_server: CommandServiceServer = CommandServiceServer::new(command_store, event_producer);
 
-            // I need to reach out to kafka and get the data from there
-            let input_channel = StreamKafkaInboundChannel::new(
-                service_id,
-                &[&settings.get_string("topics").unwrap()],
-                &settings.get_string("bootstrap_server").unwrap()
-            );
-            input_channel.consume_async_blocking(Arc::new(Mutex::new(command_server)), response_channel_cloned);
+            let input_channel = self.carrier.get_command_channel(settings.clone());
+            input_channel.consume_async_blocking(Arc::new(Mutex::new(Box::new(command_server))),
+                                                 Arc::new(Mutex::new(self.carrier.get_response_channel(settings.clone()))));
         });
     }
 }
 
-impl<AGGREGATE: Default> CqrsFramework<AGGREGATE> {
+impl<AGGREGATE: Default + Sync + Send, CARRIER: ServerCarrier + Default + Sync + Send> CqrsFramework<AGGREGATE, CARRIER> {
 
-    pub fn new() -> CqrsFramework<AGGREGATE> {
+    pub fn new() -> CqrsFramework<AGGREGATE, CARRIER> {
         return CqrsFramework {
-            aggregate: AGGREGATE::default()
+            aggregate: AGGREGATE::default(),
+            carrier: CARRIER::default()
         }
     }
 }
@@ -124,14 +125,14 @@ impl CqrsQuery {
 #[cfg(test)]
 mod test {
     use std::error::Error;
-    use std::sync::{Arc, Mutex};
     use async_trait::async_trait;
     use config::{Config, ConfigError};
     use serde::{Deserialize, Serialize};
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
-    use cqrs_library::{CommandResponse, Event, OutboundChannel, SerializableCommand};
+    use cqrs_library::{CommandResponse, Event, SerializableCommand};
     use crate::aggregate::{Aggregate, CqrsClient, CqrsFramework, CqrsQuery};
+    use crate::carrier::{TokioCarrier, TokioOutboundChannel};
 
     #[derive(Debug, Deserialize, Serialize)]
     struct User {
@@ -217,40 +218,19 @@ mod test {
         print!("User created");
     }
 
-    pub(crate) struct TokioOutboundChannel {
-        sender: Option<Sender<Vec<u8>>>
-    }
 
-    impl TokioOutboundChannel {
-        pub(crate) fn new(sender: Sender<Vec<u8>>) -> Self {
-            return TokioOutboundChannel {
-                sender: Some(sender)
-            }
-        }
-    }
 
-    impl OutboundChannel for TokioOutboundChannel {
-        fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
-            if let Some(sender) = self.sender.take() {
-                sender.send(message).expect("Message sending failed");
-            }
-        }
-    }
 
     #[tokio::test]
     async fn test_use_framework() {
-        let framework = CqrsFramework::<User>::new();
+        let framework = CqrsFramework::<User, TokioCarrier>::new();
 
-        let (event_sender, event_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
         let (response_sender, response_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
-        let (command_sender, command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (command_sender,command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
 
         let settings = Config::default();
-        let event_channel = TokioOutboundChannel::new(event_sender);
         let response_channel = TokioOutboundChannel::new(response_sender);
-        let handle = framework.start(settings.clone(), String::from("TEST_SERVICE"),
-                                     Box::new(event_channel),
-                                     Arc::new(Mutex::new(response_channel)));
+        let handle = framework.start(settings.clone(), String::from("TEST_SERVICE"));
 
         // on the server side I need to start a runtime which listens to commands
         // each time a command arrives, it passes it to a command handler of the

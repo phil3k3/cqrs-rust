@@ -47,7 +47,7 @@ impl<'a> CommandStore {
 
 pub struct EventProducerImpl {
     service_id: String,
-    event_channel: Box<dyn OutboundChannel + Send>
+    event_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send>>
 }
 
 pub trait EventProducer {
@@ -58,13 +58,13 @@ impl EventProducer for EventProducerImpl {
 
     fn produce(&mut self, event: &dyn Event) {
         let event_message = self.convert_event(event);
-        self.event_channel.send(Vec::from(event.get_id()), event_message);
+        self.event_channel.lock().unwrap().send(Vec::from(event.get_id()), event_message);
     }
 }
 
 impl<'e> EventProducerImpl {
 
-    pub fn new(service_id: String, event_channel: Box<dyn OutboundChannel + Send>) -> EventProducerImpl {
+    pub fn new(service_id: String, event_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send>>) -> EventProducerImpl {
         EventProducerImpl { service_id, event_channel }
     }
 
@@ -145,7 +145,7 @@ pub struct EventListener {
 }
 
 pub trait MessageProcessor {
-    fn consume(&mut self, event_message: &[u8], output_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send + Sync>>);
+    fn consume(&mut self, event_message: &[u8], output_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
 }
 
 pub trait MessageConsumer {
@@ -327,7 +327,7 @@ pub struct CommandServiceServer {
 }
 
 impl MessageProcessor for CommandServiceServer {
-    fn consume(&mut self, event_message: &[u8], output_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send + Sync>>) {
+    fn consume(&mut self, event_message: &[u8], output_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
         let command_response = handle_command(&Vec::from(event_message), &self.command_store, &mut self.event_producer);
         match command_response {
             None => {}

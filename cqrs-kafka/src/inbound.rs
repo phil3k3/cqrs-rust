@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use async_trait::async_trait;
 
 use futures::TryStreamExt;
 use log::info;
@@ -7,7 +8,9 @@ use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
+use tokio::sync::oneshot::{Receiver, Sender};
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
+use crate::StreamInboundChannel;
 
 struct CustomContext;
 
@@ -35,6 +38,44 @@ pub struct KafkaInboundChannel {
 
 pub struct StreamKafkaInboundChannel {
     consumer: StreamConsumer<CustomContext>,
+}
+
+#[async_trait]
+impl StreamInboundChannel for StreamKafkaInboundChannel {
+    async fn consume_async_blocking(&self, message_processor: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, outbound_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
+        let message_processor_cloned = message_processor;
+        let outbound_channel_cloned = outbound_channel.clone();
+        self.consumer.stream().try_for_each(|borrowed_message| {
+            let message_processor_cloned_2 = message_processor_cloned.clone();
+            let outbound_channel_cloned_2 = outbound_channel_cloned.clone();
+            async move {
+                message_processor_cloned_2.clone().lock().unwrap().consume(borrowed_message.payload().unwrap(), outbound_channel_cloned_2);
+                let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
+                println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
+                         key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
+                Ok(())
+            }
+        }).await.expect("Stream processing failed");
+    }
+}
+
+pub struct StreamTokioChannel {
+    sender: Arc<Sender<Vec<u8>>>,
+    receiver: Receiver<Vec<u8>>
+}
+
+impl OutboundChannel for StreamTokioChannel {
+    fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
+        self.sender.clone().send(message);
+    }
+}
+
+#[async_trait]
+impl StreamInboundChannel for StreamTokioChannel {
+    async fn consume_async_blocking(&self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
+        let result = self.receiver..await;
+        message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel);
+    }
 }
 
 impl KafkaInboundChannel {
@@ -113,22 +154,6 @@ impl StreamKafkaInboundChannel {
                 else {
                     Ok(())
                 }
-            }
-        }).await.expect("Stream processing failed");
-    }
-
-    pub async fn consume_async_blocking<MessageProcessorParam:  MessageProcessor + Send>(&self, message_consumer: Arc<Mutex<MessageProcessorParam>>, outbound_channel: Arc<Mutex<dyn OutboundChannel + Send + Sync>>) {
-        let message_consumer_cloned = message_consumer;
-        let outbound_channel_cloned = outbound_channel.clone();
-        self.consumer.stream().try_for_each(|borrowed_message| {
-            let message_consumer_cloned_2 = message_consumer_cloned.clone();
-            let outbound_channel_cloned_2 = outbound_channel_cloned.clone();
-            async move {
-                message_consumer_cloned_2.clone().lock().unwrap().consume(borrowed_message.payload().unwrap(), outbound_channel_cloned_2);
-                let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
-                println!("Key: '{:?}', Topic: '{}', Partition: {}, Offset: {}",
-                         key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
-                Ok(())
             }
         }).await.expect("Stream processing failed");
     }
