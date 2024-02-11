@@ -42,7 +42,7 @@ pub struct StreamKafkaInboundChannel {
 
 #[async_trait]
 impl StreamInboundChannel for StreamKafkaInboundChannel {
-    async fn consume_async_blocking(mut self, message_processor: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, outbound_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
+    async fn consume_async_blocking(&mut self, message_processor: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, outbound_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
         let message_processor_cloned = message_processor;
         let outbound_channel_cloned = outbound_channel.clone();
         self.consumer.stream().try_for_each(|borrowed_message| {
@@ -61,13 +61,14 @@ impl StreamInboundChannel for StreamKafkaInboundChannel {
 
 pub struct StreamTokioChannel {
     sender: Arc<Option<Sender<Vec<u8>>>>,
-    receiver: Arc<Option<Receiver<Vec<u8>>>>
+    receiver: Arc<tokio::sync::Mutex<Option<Receiver<Vec<u8>>>>>
 }
 
 #[async_trait]
 impl StreamInboundChannel for StreamTokioChannel {
-    async fn consume_async_blocking(mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
-        if let Some(receiver) = self.receiver.take() {
+    async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
+        let mut guard = self.receiver.lock().await;
+        if let Some(receiver) = guard.take() {
             let result = receiver.await;
             message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel);
         }
