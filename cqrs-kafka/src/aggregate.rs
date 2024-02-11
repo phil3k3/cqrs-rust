@@ -36,7 +36,7 @@ impl<AGGREGATE: Sync, CARRIER: ServerCarrier + Sync + Send + 'static> CqrsFramew
             let command_store = CommandStore::new(service_id.to_owned());
             let command_server: CommandServiceServer = CommandServiceServer::new(command_store, event_producer);
 
-            let input_channel = self.carrier.get_command_channel(settings.clone());
+            let mut input_channel = self.carrier.get_command_channel(settings.clone());
             input_channel.consume_async_blocking(Arc::new(Mutex::new(Box::new(command_server))),
                                                  Arc::new(Mutex::new(self.carrier.get_response_channel(settings.clone()))));
         });
@@ -131,8 +131,9 @@ mod test {
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
     use cqrs_library::{CommandResponse, Event, SerializableCommand};
+    use cqrs_library::outbound::TokioOutboundChannel;
     use crate::aggregate::{Aggregate, CqrsClient, CqrsFramework, CqrsQuery};
-    use crate::carrier::{TokioCarrier, TokioOutboundChannel};
+    pub use crate::carrier::{TokioCarrier};
 
     #[derive(Debug, Deserialize, Serialize)]
     struct User {

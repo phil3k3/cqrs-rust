@@ -91,3 +91,5 @@ impl OutboundChannel for KafkaOutboundChannel {
         self.producer.flush(Duration::from_secs(60)).expect("Flush failed");
     }
 }
+
+

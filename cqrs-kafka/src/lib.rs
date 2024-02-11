@@ -12,7 +12,7 @@ mod carrier;
 
 #[async_trait]
 pub trait StreamInboundChannel {
-    async fn consume_async_blocking(&self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
+    async fn consume_async_blocking(mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
 }
 
 pub trait ServerCarrier {

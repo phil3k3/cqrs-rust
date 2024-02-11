@@ -4,6 +4,7 @@ use tokio::sync::oneshot;
 use tokio::sync::oneshot::{Receiver, Sender};
 use cqrs_library::OutboundChannel;
 use crate::{ServerCarrier, StreamInboundChannel};
+use cqrs_library::outbound::TokioOutboundChannel;
 
 
 pub struct KafkaServerCarrier {
@@ -13,27 +14,6 @@ pub struct KafkaServerCarrier {
 pub struct TokioCarrier {
    event_sender: Arc<Mutex<TokioOutboundChannel>>,
    event_receiver: Receiver<Vec<u8>>
-}
-
-
-pub(crate) struct TokioOutboundChannel {
-    sender: Option<Sender<Vec<u8>>>
-}
-
-impl OutboundChannel for TokioOutboundChannel {
-    fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
-        if let Some(sender) = self.sender.take() {
-            sender.send(message).expect("Message sending failed");
-        }
-    }
-}
-
-impl TokioOutboundChannel {
-    pub(crate) fn new(sender: Sender<Vec<u8>>) -> Self {
-        return TokioOutboundChannel {
-            sender: Some(sender)
-        }
-    }
 }
 
 impl Default for TokioCarrier {

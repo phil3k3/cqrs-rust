@@ -21,6 +21,8 @@ pub mod envelope {
 }
 
 mod messages;
+mod inbound;
+pub mod outbound;
 
 type CommandHandlerFn = fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse;
 
@@ -487,6 +489,7 @@ mod tests {
     use log::debug;
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
+    use crate::outbound::TokioOutboundChannel;
 
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -525,26 +528,6 @@ mod tests {
         messages: Vec<Vec<u8>>
     }
 
-
-    pub(crate) struct TokioOutboundChannel {
-        sender: Option<Sender<Vec<u8>>>
-    }
-
-    impl TokioOutboundChannel {
-        pub(crate) fn new(sender: Sender<Vec<u8>>) -> Self {
-            return TokioOutboundChannel {
-                sender: Some(sender)
-            }
-        }
-    }
-
-    impl OutboundChannel for TokioOutboundChannel {
-        fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
-            if let Some(sender) = self.sender.take() {
-                sender.send(message).expect("Message sending failed");
-            }
-        }
-    }
 
     struct TokioInboundChannel {
         receiver: Option<Receiver<Vec<u8>>>
