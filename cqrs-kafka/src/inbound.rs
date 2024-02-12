@@ -11,6 +11,7 @@ use rdkafka::error::{KafkaError, KafkaResult};
 use tokio::sync::oneshot::{Receiver, Sender};
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
 use crate::StreamInboundChannel;
+use cqrs_library::locks::ThreadSafeDataManager;
 
 struct CustomContext;
 
@@ -61,17 +62,17 @@ impl StreamInboundChannel for StreamKafkaInboundChannel {
 
 pub struct StreamTokioChannel {
     sender: Arc<Option<Sender<Vec<u8>>>>,
-    receiver: Arc<tokio::sync::Mutex<Option<Receiver<Vec<u8>>>>>
+    receiver: ThreadSafeDataManager<Receiver<Vec<u8>>>
 }
 
 #[async_trait]
 impl StreamInboundChannel for StreamTokioChannel {
     async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
-        let mut guard = self.receiver.lock().await;
-        if let Some(receiver) = guard.take() {
-            let result = receiver.await;
-            message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel);
-        }
+        self.receiver.safe_call(move |item| {
+            let response_channel_cloned = response_channel.clone();
+            let result = futures::executor::block_on(item);
+            message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel_cloned);
+        });
     }
 }
 

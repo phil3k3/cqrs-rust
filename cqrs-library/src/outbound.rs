@@ -2,7 +2,7 @@ use tokio::sync::oneshot::Sender;
 use crate::OutboundChannel;
 
 pub struct TokioOutboundChannel {
-    sender: Option<Sender<Vec<u8>>>
+    pub(crate) sender: Option<Sender<Vec<u8>>>
 }
 
 impl OutboundChannel for TokioOutboundChannel {

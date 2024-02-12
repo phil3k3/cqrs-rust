@@ -23,6 +23,7 @@ pub mod envelope {
 mod messages;
 mod inbound;
 pub mod outbound;
+pub mod locks;
 
 type CommandHandlerFn = fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse;
 
