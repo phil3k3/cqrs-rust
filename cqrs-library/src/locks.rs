@@ -14,7 +14,7 @@ impl<D> ThreadSafeDataManager<D> {
         }
     }
 
-    pub fn safe_call<F>(&mut self, mut func: F) where F: Fn(D) {
+    pub fn safe_call<F>(&mut self, func: F) where F: Fn(D) {
         let data_cloned = self.data.clone();
         let mut guard = data_cloned.lock().unwrap();
 

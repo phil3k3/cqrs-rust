@@ -151,7 +151,7 @@ pub trait MessageProcessor {
     fn consume(&mut self, event_message: &[u8], output_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
 }
 
-pub trait MessageConsumer {
+pub trait MessageConsumer : Send {
     fn consume(&self, event_message: &[u8]);
 }
 
@@ -344,27 +344,27 @@ impl MessageProcessor for CommandServiceServer {
 
 impl CommandServiceServer {
 
-    pub fn new(command_store: CommandStore, event_producer: EventProducerImpl) -> CommandServiceServer {
+    pub fn new(command_store: CommandStore, event_producer: EventProducerImpl) -> Self {
         CommandServiceServer { command_store, event_producer }
     }
 
-    pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
-        let message = command_channel.consume();
-        match message {
-            None => debug!("No message"),
-            Some(message) => {
-                let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
-                match command_response {
-                    None => {
-                        error!("No command response")
-                    }
-                    Some(command_response) => {
-                        command_response_channel.send("".as_bytes().to_vec(), command_response)
-                    }
-                }
-            }
-        }
-    }
+    // pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
+    //     let message = command_channel.consume();
+    //     match message {
+    //         None => debug!("No message"),
+    //         Some(message) => {
+    //             let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
+    //             match command_response {
+    //                 None => {
+    //                     error!("No command response")
+    //                 }
+    //                 Some(command_response) => {
+    //                     command_response_channel.send("".as_bytes().to_vec(), command_response)
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 
@@ -482,9 +482,9 @@ struct CommandResponseResult {
 #[cfg(test)]
 mod tests {
     use std::env;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use config::Config;
-    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, OutboundChannel, InboundChannel, CommandServiceServer, Command, EventProducer, Event, EventProducerImpl, EventListener};
+    use crate::{CommandAccessor, CommandStore, CommandResponse, CommandServiceClient, InboundChannel, CommandServiceServer, EventProducer, Event, EventProducerImpl, SerializableCommand, MessageProcessor};
     use serde::{Serialize, Deserialize};
 
     use log::debug;
@@ -505,7 +505,7 @@ mod tests {
         name: String
     }
 
-    impl Command<'_> for TestCreateUserCommand {
+    impl<'a> SerializableCommand<'a> for TestCreateUserCommand {
         fn get_subject(&self) -> String {
             self.user_id.to_owned()
         }
@@ -556,7 +556,7 @@ mod tests {
         }
     }
 
-    fn deserialize<'a, T: Command<'a>>(command: &'a Vec<u8>) -> Box<T> {
+    fn deserialize<'a, T: SerializableCommand<'a>>(command: &'a Vec<u8>) -> Box<T> {
         let v = command.as_slice();
         Box::new(serde_json::from_slice::<T>(v).unwrap())
     }
@@ -624,15 +624,17 @@ mod tests {
             let mut command_store = CommandStore::new(String::from("COMMAND-SERVER"));
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-            let mut event_producer = EventProducerImpl::new(String::from("COMMAND-SERVER"), Box::new(TokioOutboundChannel::new(event_sender)));
-            let mut command_service_server = CommandServiceServer::new(command_store, event_producer);
+            let event_producer = EventProducerImpl::new(String::from("COMMAND-SERVER"),
+                                                            Arc::new(Mutex::new(TokioOutboundChannel::new(event_sender)))
+            );
+            let mut command_service_server  = CommandServiceServer::new(command_store, event_producer);
 
             match command_receiver.await {
-                Ok(mut k) => {
-                    let mut channel1 = TokioOutboundChannel {
+                Ok(mut message) => {
+                    let channel1 = TokioOutboundChannel {
                         sender: Some(response_sender)
                     };
-                    command_service_server.handle_message(&mut k, &mut channel1)
+                    command_service_server.consume(&mut message, Arc::new(std::sync::Mutex::new(Box::new(channel1))))
                 }
                 Err(_) => {
                     assert!(false);

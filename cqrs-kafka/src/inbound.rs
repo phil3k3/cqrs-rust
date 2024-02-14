@@ -10,7 +10,7 @@ use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, Stre
 use rdkafka::error::{KafkaError, KafkaResult};
 use tokio::sync::oneshot::{Receiver, Sender};
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
-use crate::StreamInboundChannel;
+use crate::StreamInboundProcessingChannel;
 use cqrs_library::locks::ThreadSafeDataManager;
 
 struct CustomContext;
@@ -42,7 +42,7 @@ pub struct StreamKafkaInboundChannel {
 }
 
 #[async_trait]
-impl StreamInboundChannel for StreamKafkaInboundChannel {
+impl StreamInboundProcessingChannel for StreamKafkaInboundChannel {
     async fn consume_async_blocking(&mut self, message_processor: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, outbound_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
         let message_processor_cloned = message_processor;
         let outbound_channel_cloned = outbound_channel.clone();
@@ -66,7 +66,7 @@ pub struct StreamTokioChannel {
 }
 
 #[async_trait]
-impl StreamInboundChannel for StreamTokioChannel {
+impl StreamInboundProcessingChannel for StreamTokioChannel {
     async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
         self.receiver.safe_call(move |item| {
             let response_channel_cloned = response_channel.clone();

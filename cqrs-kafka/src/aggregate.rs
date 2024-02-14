@@ -5,7 +5,7 @@ use config::Config;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, SerializableCommand};
-use crate::ServerCarrier;
+use crate::{ClientCarrier, ServerCarrier, StreamInboundChannel};
 use crate::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
 use crate::outbound::KafkaOutboundChannel;
 
@@ -43,12 +43,13 @@ impl<AGGREGATE: Sync, CARRIER: ServerCarrier + Sync + Send + 'static> CqrsFramew
     }
 }
 
-impl<AGGREGATE: Default + Sync + Send, CARRIER: ServerCarrier + Default + Sync + Send> CqrsFramework<AGGREGATE, CARRIER> {
+impl<AGGREGATE: Default + Sync + Send, CARRIER: ServerCarrier + Sync + Send> CqrsFramework<AGGREGATE, CARRIER> {
 
-    pub fn new() -> CqrsFramework<AGGREGATE, CARRIER> {
+    pub fn new_existing_carrier(carrier: CARRIER) -> CqrsFramework<AGGREGATE, CARRIER> {
+
         return CqrsFramework {
             aggregate: AGGREGATE::default(),
-            carrier: CARRIER::default()
+            carrier
         }
     }
 }
@@ -94,16 +95,20 @@ impl CqrsClient {
     }
 }
 
-struct CqrsQuery {
-    event_listener: Arc<Mutex<Option<Box<EventListener>>>>
+struct CqrsQuery  {
+    event_listener: EventListener,
+    event_channel: Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>>,
 }
 
 impl CqrsQuery {
-    pub fn new(event_type: &str, event_handler: EventHandlerFn) -> Self {
+    pub fn new<CARRIER: ClientCarrier>(event_type: &str, event_handler: EventHandlerFn, carrier: CARRIER) -> Self {
         let mut event_listener = EventListener::new();
         event_listener.register_handler(event_type, event_handler);
+        let event_channel = carrier.get_event_channel();
+
         return CqrsQuery {
-            event_listener: Arc::new(Mutex::new(Some(Box::new(event_listener))))
+            event_channel,
+            event_listener,
         };
     }
 
@@ -117,7 +122,10 @@ impl CqrsQuery {
                 &settings.get_string("bootstrap_server").unwrap(),
             );
 
-            kafka_event_listener_channel.consume_async_blocking_consumer(self.event_listener).await;
+            let mut guard = self.event_channel.lock().await;
+            if let Some(mut channel) = guard.take() {
+                channel.consume_async_blocking(Arc::new(tokio::sync::Mutex::new(Box::new(self.event_listener))));
+            }
         });
     }
 }
@@ -128,12 +136,10 @@ mod test {
     use async_trait::async_trait;
     use config::{Config, ConfigError};
     use serde::{Deserialize, Serialize};
-    use tokio::sync::oneshot;
-    use tokio::sync::oneshot::{Receiver, Sender};
     use cqrs_library::{CommandResponse, Event, SerializableCommand};
-    use cqrs_library::outbound::TokioOutboundChannel;
     use crate::aggregate::{Aggregate, CqrsClient, CqrsFramework, CqrsQuery};
     pub use crate::carrier::{TokioCarrier};
+    use crate::carrier::TokioServerCarrier;
 
     #[derive(Debug, Deserialize, Serialize)]
     struct User {
@@ -224,13 +230,10 @@ mod test {
 
     #[tokio::test]
     async fn test_use_framework() {
-        let framework = CqrsFramework::<User, TokioCarrier>::new();
-
-        let (response_sender, response_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
-        let (command_sender,command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = oneshot::channel();
+        let (server, client) = TokioCarrier::new();
+        let framework = CqrsFramework::<User, TokioServerCarrier>::new_existing_carrier(server);
 
         let settings = Config::default();
-        let response_channel = TokioOutboundChannel::new(response_sender);
         let handle = framework.start(settings.clone(), String::from("TEST_SERVICE"));
 
         // on the server side I need to start a runtime which listens to commands
@@ -239,7 +242,7 @@ mod test {
         // back to the command response channel, the events are written to the events channel
         // then the explicit transaction finishes
 
-        let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created);
+        let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created, client);
         cqrs_query.start(settings.clone());
 
         let client = CqrsClient::new(settings.clone());
