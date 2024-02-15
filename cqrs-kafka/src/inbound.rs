@@ -9,9 +9,8 @@ use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
 use tokio::sync::oneshot::{Receiver, Sender};
-use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel};
-use crate::StreamInboundProcessingChannel;
-use cqrs_library::locks::ThreadSafeDataManager;
+use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
+use cqrs_library::locks::{StdThreadSafeDataManager, TokioThreadSafeDataManager};
 
 struct CustomContext;
 
@@ -60,19 +59,33 @@ impl StreamInboundProcessingChannel for StreamKafkaInboundChannel {
     }
 }
 
-pub struct StreamTokioChannel {
+pub struct StreamProcessingTokioChannel {
     sender: Arc<Option<Sender<Vec<u8>>>>,
-    receiver: ThreadSafeDataManager<Receiver<Vec<u8>>>
+    receiver: StdThreadSafeDataManager<Receiver<Vec<u8>>>
 }
 
 #[async_trait]
-impl StreamInboundProcessingChannel for StreamTokioChannel {
+impl StreamInboundProcessingChannel for StreamProcessingTokioChannel {
     async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
         self.receiver.safe_call(move |item| {
             let response_channel_cloned = response_channel.clone();
             let result = futures::executor::block_on(item);
             message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel_cloned);
         });
+    }
+}
+
+pub struct StreamTokioChannel {
+    pub(crate) receiver: TokioThreadSafeDataManager<Receiver<Vec<u8>>>
+}
+
+#[async_trait]
+impl StreamInboundChannel for StreamTokioChannel {
+    async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageConsumer + Send>>>) {
+        self.receiver.safe_call(move |item| {
+            let result = futures::executor::block_on(item);
+            message_consumer.lock().unwrap().consume(result.unwrap().as_slice());
+        }).await
     }
 }
 

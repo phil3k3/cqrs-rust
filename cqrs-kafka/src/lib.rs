@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
-use async_trait::async_trait;
 use config::Config;
-use cqrs_library::{MessageConsumer, MessageProcessor, OutboundChannel};
+use cqrs_library::{OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
+use cqrs_library::locks::TokioThreadSafeDataManager;
 
 pub mod inbound;
 pub mod outbound;
@@ -10,15 +10,7 @@ mod command;
 mod event;
 mod carrier;
 
-#[async_trait]
-pub trait StreamInboundProcessingChannel {
-    async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
-}
 
-#[async_trait]
-pub trait StreamInboundChannel {
-    async fn consume_async_blocking(&mut self, message_consumer: Arc<tokio::sync::Mutex<Box<dyn MessageConsumer + Send>>>);
-}
 
 pub trait ServerCarrier {
     fn get_event_channel(&self) -> Arc<Mutex<dyn OutboundChannel + Sync + Send>>;
@@ -28,12 +20,12 @@ pub trait ServerCarrier {
      fn get_response_channel(&self, settings: Config) -> Box<dyn OutboundChannel + Sync + Send>;
 }
 
-pub trait ClientCarrier {
-    fn get_event_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>>;
+pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: OutboundChannel> {
+    fn get_event_channel(&self) -> TokioThreadSafeDataManager<Box<INBOUND>>;
 
-    fn get_response_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>>;
+    fn get_response_channel(&self) -> TokioThreadSafeDataManager<Box<INBOUND>>;
 
-    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn OutboundChannel>>>>;
+    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<OUTBOUND>>>>;
 }
 
 

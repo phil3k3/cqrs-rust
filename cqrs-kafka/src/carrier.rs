@@ -2,14 +2,11 @@ use std::sync::{Arc, Mutex};
 use config::Config;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::{Receiver, Sender};
-use cqrs_library::OutboundChannel;
-use crate::{ClientCarrier, ServerCarrier, StreamInboundChannel, StreamInboundProcessingChannel};
+use cqrs_library::locks::TokioThreadSafeDataManager;
+use cqrs_library::{OutboundChannel, StreamInboundProcessingChannel};
+use crate::{ClientCarrier, ServerCarrier};
 use cqrs_library::outbound::TokioOutboundChannel;
-
-
-pub struct KafkaServerCarrier {
-
-}
+use crate::inbound::StreamTokioChannel;
 
 pub struct TokioCarrier {
 }
@@ -21,8 +18,11 @@ impl TokioCarrier {
         let server = TokioServerCarrier {
             event_sender: Arc::new(Mutex::new(TokioOutboundChannel::new(event_sender))),
         };
-        let client= TokioClientCarrier {
-            event_receiver
+        let channel1 = StreamTokioChannel {
+            receiver: TokioThreadSafeDataManager::new(event_receiver),
+        };
+        let client = TokioClientCarrier {
+            event_receiver: TokioThreadSafeDataManager::new(Box::new(channel1))
         };
         return (server, client);
     }
@@ -33,37 +33,22 @@ pub struct TokioServerCarrier {
 }
 
 pub struct TokioClientCarrier {
-    event_receiver: Receiver<Vec<u8>>
+    event_receiver: TokioThreadSafeDataManager<Box<StreamTokioChannel>>
 }
 
-impl ClientCarrier for TokioClientCarrier {
-    fn get_event_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>> {
+impl ClientCarrier<StreamTokioChannel, TokioOutboundChannel> for TokioClientCarrier {
+    fn get_event_channel(&self) -> TokioThreadSafeDataManager<Box<StreamTokioChannel>> {
+       return self.event_receiver.clone();
+    }
+
+    fn get_response_channel(&self) -> TokioThreadSafeDataManager<Box<StreamTokioChannel>> {
         todo!()
     }
 
-    fn get_response_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>> {
-        todo!()
-    }
-
-    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<dyn OutboundChannel>>>> {
-        todo!()
-    }
-}
-
-impl ServerCarrier for KafkaServerCarrier {
-    fn get_event_channel(&self) -> Arc<std::sync::Mutex<dyn OutboundChannel + Sync + Send>> {
-        todo!()
-    }
-
-    fn get_command_channel(&self, _settings: Config) -> Box<dyn StreamInboundProcessingChannel + Sync + Send> {
-        todo!()
-    }
-
-    fn get_response_channel(&self, _settings: Config) -> Box<dyn OutboundChannel + Sync + Send> {
+    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<TokioOutboundChannel>>>> {
         todo!()
     }
 }
-
 
 impl ServerCarrier for TokioServerCarrier {
 

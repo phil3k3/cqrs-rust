@@ -1,12 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-pub type ThreadSafeData<D> = Arc<Mutex<Option<D>>>;
-
-pub struct ThreadSafeDataManager<D> {
-    data: ThreadSafeData<D>
+pub type StdThreadSafeData<D> = Arc<Mutex<Option<D>>>;
+pub struct StdThreadSafeDataManager<D> {
+    data: StdThreadSafeData<D>
 }
 
-impl<D> ThreadSafeDataManager<D> {
+pub type TokioThreadSafeData<D> = Arc<tokio::sync::Mutex<Option<D>>>;
+
+impl<D> StdThreadSafeDataManager<D> {
 
     pub fn new(data: D) -> Self {
         return Self {
@@ -24,10 +25,39 @@ impl<D> ThreadSafeDataManager<D> {
     }
 }
 
-impl<D> Clone for ThreadSafeDataManager<D> {
+pub struct TokioThreadSafeDataManager<D> {
+    data: TokioThreadSafeData<D>
+}
+
+impl<D> TokioThreadSafeDataManager<D> {
+    pub fn new(data: D) -> Self {
+        return Self {
+            data: Arc::new(tokio::sync::Mutex::new(Some(data))),
+        }
+    }
+
+    pub async fn safe_call<F>(&mut self, func: F) where F: Fn(D) {
+        let data_cloned = self.data.clone();
+        let mut guard = data_cloned.lock().await;
+
+        if let Some(result) = guard.take() {
+            func(result)
+        }
+    }
+}
+
+impl<D> Clone for StdThreadSafeDataManager<D> {
     fn clone(&self) -> Self {
-        return ThreadSafeDataManager {
+        return StdThreadSafeDataManager {
             data: self.data.clone(),
+        }
+    }
+}
+
+impl<D> Clone for TokioThreadSafeDataManager<D> {
+    fn clone(&self) -> Self {
+        return TokioThreadSafeDataManager {
+            data: self.data.clone()
         }
     }
 }

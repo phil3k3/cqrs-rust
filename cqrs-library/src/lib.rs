@@ -4,6 +4,7 @@ use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
@@ -129,16 +130,102 @@ pub trait OutboundChannel : Send + Sync {
 pub trait InboundChannel : Send + Sync {
     fn consume(&mut self) -> Option<Vec<u8>>;
 }
+#[async_trait]
+pub trait StreamInboundProcessingChannel {
+    async fn consume_async_blocking(&mut self, message_consumer: Arc<std::sync::Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>);
+}
 
+#[async_trait]
+pub trait StreamInboundChannel : Send + Sync {
+    async fn consume_async_blocking(&mut self, message_consumer: Arc<std::sync::Mutex<Box<dyn MessageConsumer + Send>>>);
+}
 
 pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChannel, OUTBOUND: OutboundChannel {
     settings: Config,
-    pending_responses_senders: Arc<Mutex<HashMap<String, Sender<CommandResponse>>>>,
-    // running: Arc<Mutex<bool>>,
+    command_distributor: Arc<Mutex<CommandDistributor>>,
     inbound_channel_builder: InboundChannelBuilder<INBOUND>,
     outbound_channel_builder: OutboundChannelBuilder<OUTBOUND>
 }
 
+pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel, OUTBOUND: OutboundChannel {
+    command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
+    inbound_channel: INBOUND,
+    outbound_channel: OUTBOUND,
+}
+
+impl<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND, OUTBOUND> {
+
+    pub fn new() -> Self {
+        todo!()
+    }
+}
+
+struct CommandDistributor {
+    pending_responses_senders: HashMap<String, Sender<CommandResponse>>
+}
+
+impl Default for CommandDistributor {
+    fn default() -> Self {
+        return CommandDistributor {
+            pending_responses_senders: HashMap::new(),
+        }
+    }
+}
+
+impl CommandDistributor {
+    fn read_response(message: &[u8]) -> Option<(CommandResponse, String)> {
+        let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
+        match result {
+            Ok(command_response) => {
+                let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
+                match command_response_result {
+                    Ok(crr) => {
+                        if crr.result.eq("Ok") {
+                            Some((CommandResponse::Ok, command_response.command_id))
+                        } else {
+                            Some((CommandResponse::Error, command_response.command_id))
+                        }
+                    }
+                    Err(err) =>  {
+                        error!("{}", err);
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                error!("{}", err);
+                None
+            }
+        }
+    }
+
+    pub fn distribute(&mut self, event_message: &[u8]) {
+        let result = CommandDistributor::read_response(event_message);
+        match result {
+            None => {}
+            Some(result) => {
+                if let Some(sender) = self.pending_responses_senders.remove(result.1.as_str()) {
+                    debug!("Received response for {}: {}", result.1.as_str(), result.0);
+                    sender.send(result.0).expect("Command could not be delivered");
+                } else {
+                    error!("Sender not found");
+                }
+            }
+        }
+    }
+
+    pub fn add(&mut self, key: String, value: Sender<CommandResponse>) {
+        self.pending_responses_senders.insert(key, value);
+    }
+}
+
+impl<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel> MessageConsumer for StreamCommandServiceClient<INBOUND, OUTBOUND> {
+    fn consume(&self, event_message: &[u8]) {
+        let result = self.command_distributor.clone();
+        let mut result2 = result.lock().unwrap();
+        result2.distribute(event_message);
+    }
+}
 
 pub type InboundChannelBuilder<T: InboundChannel> = Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Box<T> + Sync + Send>>>>;
 pub type OutboundChannelBuilder<T: OutboundChannel> = Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Box<T>>>>>;
@@ -215,7 +302,7 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
                outbound_channel_builder: OutboundChannelBuilder<OUTBOUND>) -> CommandServiceClient<INBOUND, OUTBOUND> {
         CommandServiceClient {
             settings,
-            pending_responses_senders: Arc::new(Mutex::new(HashMap::new())),
+            command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
             // running: Arc::new(Mutex::new(false)),
             inbound_channel_builder,
             outbound_channel_builder
@@ -223,9 +310,7 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
     }
 
     pub fn start(&mut self) -> JoinHandle<()> {
-        // Clone Arc handles to move into the async block
-        // let running = self.running.clone();
-        let pending_responses_senders = self.pending_responses_senders.clone();
+        let command_distributor = self.command_distributor.clone();
         let channel_reader = self.inbound_channel_builder.clone();
         let settings2 = self.settings.clone();
         return tokio::task::spawn(async move {
@@ -233,21 +318,12 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
             if let Some(func) = guard.take() {
                 let mut channel = func(settings2);
                 loop {
-                    let response = CommandServiceClient::<INBOUND, OUTBOUND>::read_response(&mut channel);
-                    match response {
-                        None => {
-                            info!("No result");
-                        }
-                        Some(result) => {
-                            let mut result1 = pending_responses_senders.lock().await;
-                            {
-                                if let Some(sender) = result1.remove(result.1.as_str()) {
-                                    debug!("Received response for {}: {}", result.1.as_str(), result.0);
-                                    sender.send(result.0).expect("Command could not be delivered");
-                                } else {
-                                    error!("Sender not found");
-                                }
-                            }
+                    let result = channel.consume();
+                    match result {
+                        None => info!("No result"),
+                        Some(data) => {
+                            let mut result = command_distributor.lock().await;
+                            result.distribute(data.as_slice());
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -261,8 +337,8 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
         let (tx, rx) = channel();
 
         {
-            let mut result1 = self.pending_responses_senders.lock().await;
-            result1.insert(command_id.to_owned(), tx);
+            let mut result1 = self.command_distributor.lock().await;
+            result1.add(command_id.to_owned(), tx);
         }
 
         let service_id = self.settings.get_string("service_id").unwrap();
@@ -286,41 +362,6 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
         let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
         let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
         command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
-    }
-
-    fn read_response(command_response_channel: &mut Box<INBOUND>) -> Option<(CommandResponse, String)> {
-        let serialized_message = command_response_channel.consume();
-        return match serialized_message {
-            None => {
-                debug!("No response");
-                None
-            }
-            Some(message) => {
-                let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
-                match result {
-                    Ok(command_response) => {
-                        let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
-                        match command_response_result {
-                            Ok(crr) => {
-                                if crr.result.eq("Ok") {
-                                    Some((CommandResponse::Ok, command_response.command_id))
-                                } else {
-                                    Some((CommandResponse::Error, command_response.command_id))
-                                }
-                            }
-                            Err(err) =>  {
-                                error!("{}", err);
-                                None
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        error!("{}", err);
-                        None
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -347,24 +388,6 @@ impl CommandServiceServer {
     pub fn new(command_store: CommandStore, event_producer: EventProducerImpl) -> Self {
         CommandServiceServer { command_store, event_producer }
     }
-
-    // pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
-    //     let message = command_channel.consume();
-    //     match message {
-    //         None => debug!("No message"),
-    //         Some(message) => {
-    //             let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
-    //             match command_response {
-    //                 None => {
-    //                     error!("No command response")
-    //                 }
-    //                 Some(command_response) => {
-    //                     command_response_channel.send("".as_bytes().to_vec(), command_response)
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 

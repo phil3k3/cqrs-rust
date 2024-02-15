@@ -4,9 +4,10 @@ use async_trait::async_trait;
 use config::Config;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, SerializableCommand};
-use crate::{ClientCarrier, ServerCarrier, StreamInboundChannel};
-use crate::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
+use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, OutboundChannel, SerializableCommand, StreamCommandServiceClient, StreamInboundChannel};
+use cqrs_library::locks::TokioThreadSafeDataManager;
+use crate::{ClientCarrier, ServerCarrier};
+use crate::inbound::KafkaInboundChannel;
 use crate::outbound::KafkaOutboundChannel;
 
 
@@ -95,37 +96,31 @@ impl CqrsClient {
     }
 }
 
-struct CqrsQuery  {
+struct CqrsQuery<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel>  {
     event_listener: EventListener,
-    event_channel: Arc<tokio::sync::Mutex<Option<Box<dyn StreamInboundChannel + Sync + Send>>>>,
+    event_channel: TokioThreadSafeDataManager<Box<INBOUND>>,
+    command_client: StreamCommandServiceClient<INBOUND, OUTBOUND>
 }
 
-impl CqrsQuery {
-    pub fn new<CARRIER: ClientCarrier>(event_type: &str, event_handler: EventHandlerFn, carrier: CARRIER) -> Self {
+impl<INBOUND: StreamInboundChannel+ 'static, OUTBOUND: OutboundChannel> CqrsQuery<INBOUND, OUTBOUND> {
+    pub fn new<CARRIER: ClientCarrier<INBOUND, OUTBOUND>>(event_type: &str, event_handler: EventHandlerFn, carrier: CARRIER) -> Self {
         let mut event_listener = EventListener::new();
         event_listener.register_handler(event_type, event_handler);
         let event_channel = carrier.get_event_channel();
 
+        let command_service_client = StreamCommandServiceClient::new();
         return CqrsQuery {
-            event_channel,
             event_listener,
+            event_channel,
+            command_client: command_service_client
         };
     }
 
-    pub fn start(self, settings: Config) {
+    pub fn start(mut self) {
         tokio::spawn(async move {
-            let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
-            let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
-            let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
-                settings.get_string("service_id").unwrap(),
-                topics.as_slice(),
-                &settings.get_string("bootstrap_server").unwrap(),
-            );
-
-            let mut guard = self.event_channel.lock().await;
-            if let Some(mut channel) = guard.take() {
-                channel.consume_async_blocking(Arc::new(tokio::sync::Mutex::new(Box::new(self.event_listener))));
-            }
+            self.event_channel.safe_call(|mut result| {
+                result.consume_async_blocking(Arc::new(Mutex::new(Box::new(self.event_listener))));
+            }).await;
         });
     }
 }
@@ -243,7 +238,7 @@ mod test {
         // then the explicit transaction finishes
 
         let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created, client);
-        cqrs_query.start(settings.clone());
+        cqrs_query.start();
 
         let client = CqrsClient::new(settings.clone());
         let response = client.send_command::<User>(UserCommand::Create {
