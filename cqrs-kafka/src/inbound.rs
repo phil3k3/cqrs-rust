@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use async_trait::async_trait;
+use futures::channel::mpsc::UnboundedReceiver;
 
 use futures::TryStreamExt;
 use log::info;
@@ -76,14 +77,18 @@ impl StreamInboundProcessingChannel for StreamProcessingTokioChannel {
 }
 
 pub struct StreamTokioChannel {
-    pub(crate) receiver: TokioThreadSafeDataManager<Receiver<Vec<u8>>>
+    pub(crate) receiver: TokioThreadSafeDataManager<UnboundedReceiver<Vec<u8>>>
 }
 
 #[async_trait]
 impl StreamInboundChannel for StreamTokioChannel {
-    async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageConsumer + Send>>>) {
+    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: Arc<Mutex<Box<CONSUMER>>>) {
         self.receiver.safe_call(move |item| {
-            let result = futures::executor::block_on(item);
+            loop {
+                match item.try_recv() {
+                    Ok()
+                }
+            }
             message_consumer.lock().unwrap().consume(result.unwrap().as_slice());
         }).await
     }

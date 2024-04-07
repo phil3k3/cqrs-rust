@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use config::Config;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, OutboundChannel, SerializableCommand, StreamCommandServiceClient, StreamInboundChannel};
+use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, SerializableCommand, StreamInboundChannel};
 use cqrs_library::locks::TokioThreadSafeDataManager;
-use crate::{ClientCarrier, ServerCarrier};
+use crate::{QueryCarrier, ServerCarrier};
 use crate::inbound::KafkaInboundChannel;
 use crate::outbound::KafkaOutboundChannel;
 
@@ -96,34 +96,37 @@ impl CqrsClient {
     }
 }
 
-struct CqrsQuery<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel>  {
-    event_listener: EventListener,
-    event_channel: TokioThreadSafeDataManager<Box<INBOUND>>,
-    command_client: StreamCommandServiceClient<INBOUND, OUTBOUND>
+struct CqrsQuery<INBOUND: StreamInboundChannel>  {
+    event_listener: Arc<Mutex<Box<EventListener>>>,
+    event_channel: Arc<Mutex<Box<INBOUND>>>
 }
 
-impl<INBOUND: StreamInboundChannel+ 'static, OUTBOUND: OutboundChannel> CqrsQuery<INBOUND, OUTBOUND> {
-    pub fn new<CARRIER: ClientCarrier<INBOUND, OUTBOUND>>(event_type: &str, event_handler: EventHandlerFn, carrier: CARRIER) -> Self {
+impl<INBOUND: StreamInboundChannel+ 'static> CqrsQuery<INBOUND> {
+    pub fn new<CARRIER: QueryCarrier<INBOUND>>(event_type: &str, event_handler: EventHandlerFn, carrier: CARRIER) -> Self {
         let mut event_listener = EventListener::new();
         event_listener.register_handler(event_type, event_handler);
         let event_channel = carrier.get_event_channel();
 
-        let command_service_client = StreamCommandServiceClient::new();
         return CqrsQuery {
-            event_listener,
+            event_listener: Arc::new(Mutex::new(Box::new(event_listener))),
             event_channel,
-            command_client: command_service_client
         };
     }
 
     pub fn start(mut self) {
+        let listener1 = self.event_listener.clone();
         tokio::spawn(async move {
+            let listener2 = listener1.clone();
             self.event_channel.safe_call(|mut result| {
-                result.consume_async_blocking(Arc::new(Mutex::new(Box::new(self.event_listener))));
+                result.consume_async_blocking(listener2);
             }).await;
         });
     }
 }
+
+
+
+
 
 #[cfg(test)]
 mod test {

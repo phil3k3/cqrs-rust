@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use tokio::sync::oneshot::{channel, Sender};
 use tokio::task::JoinHandle;
 use crate::envelope::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
+use crate::locks::TokioThreadSafeDataManager;
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -137,7 +138,7 @@ pub trait StreamInboundProcessingChannel {
 
 #[async_trait]
 pub trait StreamInboundChannel : Send + Sync {
-    async fn consume_async_blocking(&mut self, message_consumer: Arc<std::sync::Mutex<Box<dyn MessageConsumer + Send>>>);
+    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: Arc<std::sync::Mutex<Box<CONSUMER>>>);
 }
 
 pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChannel, OUTBOUND: OutboundChannel {
@@ -147,17 +148,10 @@ pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChanne
     outbound_channel_builder: OutboundChannelBuilder<OUTBOUND>
 }
 
-pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel, OUTBOUND: OutboundChannel {
+pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel<>, OUTBOUND: OutboundChannel {
     command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
-    inbound_channel: INBOUND,
-    outbound_channel: OUTBOUND,
-}
-
-impl<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND, OUTBOUND> {
-
-    pub fn new() -> Self {
-        todo!()
-    }
+    outbound_channel: TokioThreadSafeDataManager<Box<OUTBOUND>>,
+    response_channel: TokioThreadSafeDataManager<Box<INBOUND>>
 }
 
 struct CommandDistributor {
@@ -220,10 +214,10 @@ impl CommandDistributor {
 }
 
 impl<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel> MessageConsumer for StreamCommandServiceClient<INBOUND, OUTBOUND> {
-    fn consume(&self, event_message: &[u8]) {
+    fn consume(&self, command_response_message: &[u8]) {
         let result = self.command_distributor.clone();
         let mut result2 = result.lock().unwrap();
-        result2.distribute(event_message);
+        result2.distribute(command_response_message);
     }
 }
 

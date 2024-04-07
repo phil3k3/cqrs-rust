@@ -1,8 +1,8 @@
-use tokio::sync::oneshot::Sender;
+use tokio::sync::mpsc::UnboundedSender;
 use crate::OutboundChannel;
 
 pub struct TokioOutboundChannel {
-    pub(crate) sender: Option<Sender<Vec<u8>>>
+    pub(crate) sender: Option<UnboundedSender<Vec<u8>>>
 }
 
 impl OutboundChannel for TokioOutboundChannel {
@@ -14,7 +14,7 @@ impl OutboundChannel for TokioOutboundChannel {
 }
 
 impl TokioOutboundChannel {
-    pub fn new(sender: Sender<Vec<u8>>) -> Self {
+    pub fn new(sender: UnboundedSender<Vec<u8>>) -> Self {
         return TokioOutboundChannel {
             sender: Some(sender)
         }
