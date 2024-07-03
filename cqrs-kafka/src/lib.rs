@@ -13,11 +13,11 @@ mod carrier;
 
 
 pub trait ServerCarrier {
-    fn get_event_channel(&self) -> Arc<Mutex<dyn OutboundChannel + Sync + Send>>;
+    fn get_event_channel(&self) -> Arc<Mutex<Box<dyn OutboundChannel + Sync + Send>>>;
 
      fn get_command_channel(&self, settings: Config) -> Box<dyn StreamInboundProcessingChannel + Sync + Send>;
 
-     fn get_response_channel(&self, settings: Config) -> Box<dyn OutboundChannel + Sync + Send>;
+     fn get_response_channel(&self, settings: Config) -> Arc<Mutex<Box<dyn OutboundChannel + Sync + Send>>>;
 }
 
 pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: OutboundChannel> {
@@ -28,7 +28,7 @@ pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: O
 }
 
 pub trait QueryCarrier<INBOUND: StreamInboundChannel + Sync + Send> {
-    fn get_event_channel(&self) -> Arc<tokio::sync::Mutex<Box<INBOUND>>>;
+    fn get_event_channel(&self) -> TokioThreadSafeDataManager<INBOUND>;
 }
 
 

@@ -1,10 +1,11 @@
 use std::env;
 use std::sync::{Arc, Mutex};
-use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, Event, EventProducer, EventProducerImpl};
+use cqrs_library::{Event, Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, EventProducer, EventProducerImpl};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Serialize, Deserialize};
 use log::{debug, info};
 use config::Config;
+use tokio::sync::mpsc::UnboundedSender;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 
 fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
@@ -22,7 +23,7 @@ struct TestCreateUserCommand {
     name: String,
 }
 
-impl Command<'_> for TestCreateUserCommand {
+impl Command for TestCreateUserCommand {
     fn get_subject(&self) -> String {
         self.user_id.to_owned()
     }
@@ -48,6 +49,9 @@ impl Event for UserCreatedEvent {
     }
 }
 
+fn is_send<T: Send>() {}
+fn is_sync<T: Sync>() {}
+
 #[tokio::main]
 async fn main() {
     info!("=== STARTING EXAMPLE CQRS SERVER ===");
@@ -72,39 +76,4 @@ async fn main() {
     command_response_channel.create_topic(&settings.get_string("command_topic").unwrap()).await;
     command_response_channel.create_topic(&settings.get_string("response_topic").unwrap()).await;
 
-
-    tokio::task::spawn_blocking(move || {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async move {
-            let mut command_store = CommandStore::new(String::from("COMMAND-SERVER"));
-            command_store.register_handler("CreateUserCommand", handle_create_user);
-
-            let mut command_channel = StreamKafkaInboundChannel::new(
-                String::from("COMMAND-SERVER"),
-                &[&settings.get_string("command_topic").unwrap()],
-                &settings.get_string("bootstrap_server").unwrap(),
-            );
-
-            let event_channel = KafkaOutboundChannel::new(
-                settings.get_string("events_topic").unwrap(),
-                settings.get_string("bootstrap_server").unwrap());
-
-            let mut event_producer = EventProducerImpl::new(String::from("COMMAND-SERVER"), Arc::new(Mutex::new(Box::new(event_channel))));
-
-            let mut command_service_server = CommandServiceServer::new(command_store, event_producer);
-
-            loop {
-                debug!("Waiting for message");
-                let message = command_channel.async_consume().await;
-                match message {
-                    None => {
-                        debug!("No message!");
-                    }
-                    Some(mut message) => {
-                        command_service_server.handle_message(&mut message, &mut command_response_channel);
-                    }
-                }
-            }
-        })
-    }).await.unwrap();
 }

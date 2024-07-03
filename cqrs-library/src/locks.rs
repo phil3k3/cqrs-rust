@@ -37,7 +37,7 @@ impl<D> TokioThreadSafeDataManager<D> {
     }
 
 
-    pub async fn safe_call<F>(&mut self, func: F) where F: Fn(D) {
+    pub async fn safe_call<F>(&mut self, func: F) where F: FnOnce(D) {
         let data_cloned = self.data.clone();
         let mut guard = data_cloned.lock().await;
 

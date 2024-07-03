@@ -50,9 +50,11 @@ impl<'a> CommandStore {
     }
 }
 
+
+
 pub struct EventProducerImpl {
     service_id: String,
-    event_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send>>
+    event_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>
 }
 
 pub trait EventProducer {
@@ -69,7 +71,7 @@ impl EventProducer for EventProducerImpl {
 
 impl<'e> EventProducerImpl {
 
-    pub fn new(service_id: String, event_channel: Arc<std::sync::Mutex<dyn OutboundChannel + Send>>) -> EventProducerImpl {
+    pub fn new(service_id: String, event_channel: Arc<std::sync::Mutex<Box<dyn OutboundChannel + Send + Sync>>>) -> EventProducerImpl {
         EventProducerImpl { service_id, event_channel }
     }
 
@@ -112,7 +114,7 @@ impl<'a> CommandAccessor<'a> {
         CommandAccessor { serialized_command, command_id: command_id, command_metadata: None }
     }
 
-    pub fn get_command<T: Deserialize<'a> + SerializableCommand<'a>>(&mut self) -> Box<T> {
+    pub fn get_command<T: Deserialize<'a> + Command>(&mut self) -> Box<T> {
         let slice = self.serialized_command.as_slice();
         let command = serde_json::from_slice::<T>(slice).unwrap();
         self.command_metadata = Some(CommandMetadata {
@@ -378,7 +380,6 @@ impl MessageProcessor for CommandServiceServer {
 }
 
 impl CommandServiceServer {
-
     pub fn new(command_store: CommandStore, event_producer: EventProducerImpl) -> Self {
         CommandServiceServer { command_store, event_producer }
     }

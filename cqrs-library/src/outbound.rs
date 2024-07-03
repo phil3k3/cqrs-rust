@@ -20,3 +20,11 @@ impl TokioOutboundChannel {
         }
     }
 }
+
+impl Clone for TokioOutboundChannel {
+    fn clone(&self) -> Self {
+        TokioOutboundChannel {
+            sender: self.sender.clone(),
+        }
+    }
+}

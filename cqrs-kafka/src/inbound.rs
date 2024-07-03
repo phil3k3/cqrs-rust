@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use async_trait::async_trait;
-use futures::channel::mpsc::UnboundedReceiver;
 
 use futures::TryStreamExt;
 use log::info;
@@ -9,9 +8,11 @@ use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
-use tokio::sync::oneshot::{Receiver, Sender};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::oneshot::Receiver;
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
-use cqrs_library::locks::{StdThreadSafeDataManager, TokioThreadSafeDataManager};
+use cqrs_library::locks::TokioThreadSafeDataManager;
+use cqrs_library::outbound::TokioOutboundChannel;
 
 struct CustomContext;
 
@@ -61,9 +62,17 @@ impl StreamInboundProcessingChannel for StreamKafkaInboundChannel {
 }
 
 pub struct StreamProcessingTokioChannel {
-    sender: Arc<Option<Sender<Vec<u8>>>>,
-    receiver: StdThreadSafeDataManager<Receiver<Vec<u8>>>
+    pub(crate) receiver: TokioThreadSafeDataManager<Receiver<Vec<u8>>>
 }
+
+impl Clone for StreamProcessingTokioChannel {
+    fn clone(&self) -> Self {
+        StreamProcessingTokioChannel {
+            receiver: self.receiver.clone()
+        }
+    }
+}
+
 
 #[async_trait]
 impl StreamInboundProcessingChannel for StreamProcessingTokioChannel {
@@ -83,13 +92,15 @@ pub struct StreamTokioChannel {
 #[async_trait]
 impl StreamInboundChannel for StreamTokioChannel {
     async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: Arc<Mutex<Box<CONSUMER>>>) {
-        self.receiver.safe_call(move |item| {
+        self.receiver.safe_call(move |mut item| {
             loop {
                 match item.try_recv() {
-                    Ok()
+                    Ok(message) => {
+                        message_consumer.lock().unwrap().consume(message.as_slice());
+                    }
+                    _ => {}
                 }
             }
-            message_consumer.lock().unwrap().consume(result.unwrap().as_slice());
         }).await
     }
 }

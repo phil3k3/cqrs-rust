@@ -24,9 +24,6 @@ struct CqrsFramework<AGGREGATE, CARRIER> {
     carrier: CARRIER
 }
 
-
-
-
 impl<AGGREGATE: Sync, CARRIER: ServerCarrier + Sync + Send + 'static> CqrsFramework<AGGREGATE, CARRIER> {
     pub async fn start(self,
                        settings: Config,
@@ -39,7 +36,7 @@ impl<AGGREGATE: Sync, CARRIER: ServerCarrier + Sync + Send + 'static> CqrsFramew
 
             let mut input_channel = self.carrier.get_command_channel(settings.clone());
             input_channel.consume_async_blocking(Arc::new(Mutex::new(Box::new(command_server))),
-                                                 Arc::new(Mutex::new(self.carrier.get_response_channel(settings.clone()))));
+                                                 self.carrier.get_response_channel(settings.clone()));
         });
     }
 }
@@ -98,7 +95,7 @@ impl CqrsClient {
 
 struct CqrsQuery<INBOUND: StreamInboundChannel>  {
     event_listener: Arc<Mutex<Box<EventListener>>>,
-    event_channel: Arc<Mutex<Box<INBOUND>>>
+    event_channel: TokioThreadSafeDataManager<INBOUND>
 }
 
 impl<INBOUND: StreamInboundChannel+ 'static> CqrsQuery<INBOUND> {
@@ -222,9 +219,6 @@ mod test {
     fn handle_user_created(_event: &dyn Event) {
         print!("User created");
     }
-
-
-
 
     #[tokio::test]
     async fn test_use_framework() {
