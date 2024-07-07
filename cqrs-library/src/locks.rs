@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 pub type StdThreadSafeData<D> = Arc<Mutex<Option<D>>>;
@@ -43,6 +44,14 @@ impl<D> TokioThreadSafeDataManager<D> {
 
         if let Some(result) = guard.take() {
             func(result)
+        }
+    }
+    pub async fn safe_call_multiple_async<F, Fut>(&mut self, func: F) where F: Fn(D) -> Fut, Fut: Future<Output = ()> {
+        let data_cloned = self.data.clone();
+        let mut guard = data_cloned.lock().await;
+
+        if let Some(result) = guard.take() {
+            func(result).await
         }
     }
 }

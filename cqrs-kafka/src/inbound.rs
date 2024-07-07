@@ -12,7 +12,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot::Receiver;
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
 use cqrs_library::locks::TokioThreadSafeDataManager;
-use cqrs_library::outbound::TokioOutboundChannel;
 
 struct CustomContext;
 

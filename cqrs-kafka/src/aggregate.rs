@@ -2,12 +2,12 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use config::Config;
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{CommandResponse, CommandServiceClient, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, SerializableCommand, StreamInboundChannel};
+use cqrs_library::{CommandResponse, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, InboundChannel, OutboundChannel, SerializableCommand, StreamCommandServiceClient, StreamInboundChannel};
 use cqrs_library::locks::TokioThreadSafeDataManager;
-use crate::{QueryCarrier, ServerCarrier};
-use crate::inbound::KafkaInboundChannel;
+use crate::{ClientCarrier, QueryCarrier, ServerCarrier};
 use crate::outbound::KafkaOutboundChannel;
 
 
@@ -52,15 +52,15 @@ impl<AGGREGATE: Default + Sync + Send, CARRIER: ServerCarrier + Sync + Send> Cqr
     }
 }
 
-struct CqrsClient {
-    command_sender: CommandSender
+struct CqrsClient<INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> {
+    command_sender: Arc<Mutex<CommandSender<INBOUND, OUTBOUND>>>
 }
 
-struct CommandSender {
-    command_service_client: CommandServiceClient<KafkaInboundChannel, KafkaOutboundChannel>
+struct CommandSender<INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> {
+    command_service_client: StreamCommandServiceClient<INBOUND, OUTBOUND>
 }
 
-impl CommandSender{
+impl<INBOUND: StreamInboundChannel + 'static,OUTBOUND: OutboundChannel + 'static> CommandSender<INBOUND,OUTBOUND> {
     pub async fn send<'aggregate, A : Aggregate<'aggregate>>(&mut self, command: A::Command) -> CommandResponse {
         let result = self.command_service_client.send_command(&command).await;
         return result;
@@ -68,28 +68,22 @@ impl CommandSender{
 }
 
 
-impl CqrsClient {
-    pub fn new(settings: Config) -> Self {
-        let command_service_client = CommandServiceClient::new(settings.clone(),
-                                                               Arc::new(tokio::sync::Mutex::new(Some(Box::new(|config| {
-                                                                   let service_id = config.get_string("service_id").unwrap();
-                                                                   let bootstrap_servers = config.get_string("bootstrap_server").unwrap();
-                                                                   Box::new(KafkaInboundChannel::new(
-                                                                       service_id,
-                                                                       &[config.get_string("response_topic").unwrap().as_str()],
-                                                                       bootstrap_servers
-                                                                   ))
-                                                               })))),
-                                                               Arc::new(tokio::sync::Mutex::new(Some(Box::new(|config: Config| {
-                                                                   let service_id = config.get_string("service_id").unwrap();
-                                                                   let bootstrap_servers = config.get_string("bootstrap_server").unwrap();
-                                                                   Box::new(KafkaOutboundChannel::new(service_id, bootstrap_servers))
-                                                               })))));
-        return CqrsClient { command_sender: CommandSender { command_service_client } };
+impl<INBOUND: StreamInboundChannel+'static,OUTBOUND: OutboundChannel+'static> CqrsClient<INBOUND, OUTBOUND> {
+    pub fn new<CARRIER: ClientCarrier<INBOUND,OUTBOUND>>(settings: Config, carrier: CARRIER) -> Self {
+        let command_service_client = StreamCommandServiceClient::new(
+            settings.clone(),
+            carrier.get_response_channel(),
+            carrier.get_command_channel()
+        );
+
+        let command_sender = CommandSender {command_service_client};
+        return CqrsClient { command_sender: Arc::new(Mutex::new(command_sender))  };
     }
 
     pub async fn send_command<'aggregate, A: Aggregate<'aggregate>>(&self, _command: A::Command) -> CommandResponse {
-        return CommandResponse::Ok;
+        let arc = self.command_sender.clone();
+        let mut sender = arc.lock().unwrap();
+        return sender.send::<A>(_command).await;
     }
 }
 
@@ -225,7 +219,10 @@ mod test {
         let (server, client) = TokioCarrier::new();
         let framework = CqrsFramework::<User, TokioServerCarrier>::new_existing_carrier(server);
 
-        let settings = Config::default();
+        let settings = Config::builder()
+            .set_default("service_id", "TEST").unwrap()
+            .set_default("service_instance_id", 1).unwrap()
+            .build().unwrap();
         let handle = framework.start(settings.clone(), String::from("TEST_SERVICE"));
 
         // on the server side I need to start a runtime which listens to commands
@@ -237,7 +234,7 @@ mod test {
         let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created, client);
         cqrs_query.start();
 
-        let client = CqrsClient::new(settings.clone());
+        let client = CqrsClient::new(settings.clone(), client);
         let response = client.send_command::<User>(UserCommand::Create {
             user_id: "1".to_string()
         }).await;
@@ -248,4 +245,8 @@ mod test {
         handle.await.abort_handle();
     }
 
+    #[tokio::test]
+    async fn test_receive_event() {
+
+    }
 }

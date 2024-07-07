@@ -146,14 +146,57 @@ pub trait StreamInboundChannel : Send + Sync {
 pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChannel, OUTBOUND: OutboundChannel {
     settings: Config,
     command_distributor: Arc<Mutex<CommandDistributor>>,
-    inbound_channel_builder: InboundChannelBuilder<INBOUND>,
-    outbound_channel_builder: OutboundChannelBuilder<OUTBOUND>
+    inbound_channel: Arc<Mutex<INBOUND>>,
+    outbound_channel: TokioThreadSafeDataManager<OUTBOUND>
 }
 
 pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel<>, OUTBOUND: OutboundChannel {
-    command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
-    outbound_channel: TokioThreadSafeDataManager<Box<OUTBOUND>>,
-    response_channel: TokioThreadSafeDataManager<Box<INBOUND>>
+    settings: Config,
+    command_distributor: Arc<Mutex<CommandDistributor>>,
+    outbound_channel: TokioThreadSafeDataManager<OUTBOUND>,
+    response_channel: TokioThreadSafeDataManager<INBOUND>
+}
+
+impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND,OUTBOUND> {
+    pub fn new(settings: Config,
+               inbound_channel: INBOUND,
+               outbound_channel: OUTBOUND) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
+        StreamCommandServiceClient {
+            settings,
+            command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
+            response_channel: TokioThreadSafeDataManager::new(inbound_channel),
+            outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
+        }
+    }
+
+    pub async fn send_command<C: SerializableCommand<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
+        let command_id = Uuid::new_v4().to_string();
+        let (tx, rx) = channel();
+
+        {
+            let mut result1 = self.command_distributor.lock().await;
+            result1.add(command_id.to_owned(), tx);
+        }
+
+        let service_id = self.settings.get_string("service_id").unwrap();
+        let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
+        let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
+        self.outbound_channel.safe_call(|mut result| {
+            result.send(command.get_subject().as_bytes().to_vec(), serialized_command);
+        });
+        match rx.await {
+            Ok(k) => k,
+            Err(_) => panic!("error")
+        }
+    }
+
+    pub fn send_command_async<C: SerializableCommand<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
+        let command_id = Uuid::new_v4().to_string();
+        let service_id = self.settings.get_string("service_id").unwrap();
+        let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
+        let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
+        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
+    }
 }
 
 struct CommandDistributor {
@@ -291,40 +334,35 @@ impl EventListener {
     }
 }
 
-impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChannel + Send + Sync> CommandServiceClient<INBOUND, OUTBOUND> {
+impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChannel + Send + Sync + 'static> CommandServiceClient<INBOUND, OUTBOUND> {
 
     pub fn new(settings: Config,
-               inbound_channel_builder: InboundChannelBuilder<INBOUND>,
-               outbound_channel_builder: OutboundChannelBuilder<OUTBOUND>) -> CommandServiceClient<INBOUND, OUTBOUND> {
+               inbound_channel: INBOUND,
+               outbound_channel: OUTBOUND) -> CommandServiceClient<INBOUND, OUTBOUND> {
         CommandServiceClient {
             settings,
             command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
-            // running: Arc::new(Mutex::new(false)),
-            inbound_channel_builder,
-            outbound_channel_builder
+            inbound_channel: Arc::new(Mutex::new(inbound_channel)),
+            outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
         }
     }
 
-    pub fn start(&mut self) -> JoinHandle<()> {
-        let command_distributor = self.command_distributor.clone();
-        let channel_reader = self.inbound_channel_builder.clone();
-        let settings2 = self.settings.clone();
+    pub fn start(self: Arc<Self>) -> JoinHandle<()> {
+
         return tokio::task::spawn(async move {
-            let mut guard = channel_reader.lock().await;
-            if let Some(func) = guard.take() {
-                let mut channel = func(settings2);
+            let me = Arc::clone(&self);
                 loop {
-                    let result = channel.consume();
+                    let mut result1 = me.inbound_channel.lock().await;
+                    let result = result1.consume();
                     match result {
                         None => info!("No result"),
                         Some(data) => {
-                            let mut result = command_distributor.lock().await;
+                            let mut result = me.command_distributor.lock().await;
                             result.distribute(data.as_slice());
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
-            }
         })
     }
 
@@ -340,12 +378,9 @@ impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChan
         let service_id = self.settings.get_string("service_id").unwrap();
         let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
         let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
-        let arc = self.outbound_channel_builder.clone();
-        let mut guard = arc.lock().await;
-        if let Some(func) = guard.take() {
-            let mut command_channel = func(self.settings.clone());
-            command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
-        }
+        self.outbound_channel.safe_call(|mut result| {
+            result.send(command.get_subject().as_bytes().to_vec(), serialized_command);
+        });
         match rx.await {
             Ok(k) => k,
             Err(_) => panic!("error")
