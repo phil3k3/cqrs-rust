@@ -23,7 +23,6 @@ pub mod envelope {
 }
 
 mod messages;
-mod inbound;
 pub mod outbound;
 pub mod locks;
 

@@ -6,8 +6,6 @@ use cqrs_library::locks::TokioThreadSafeDataManager;
 pub mod inbound;
 pub mod outbound;
 mod aggregate;
-mod command;
-mod event;
 mod carrier;
 
 
