@@ -2,13 +2,11 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use config::Config;
-use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use cqrs_library::{CommandResponse, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, InboundChannel, OutboundChannel, SerializableCommand, StreamCommandServiceClient, StreamInboundChannel};
+use cqrs_library::{CommandResponse, CommandServiceServer, CommandStore, Event, EventHandlerFn, EventListener, EventProducerImpl, OutboundChannel, SerializableCommand, StreamCommandServiceClient, StreamInboundChannel};
 use cqrs_library::locks::TokioThreadSafeDataManager;
 use crate::{ClientCarrier, QueryCarrier, ServerCarrier};
-use crate::outbound::KafkaOutboundChannel;
 
 
 #[async_trait]

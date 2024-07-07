@@ -22,9 +22,9 @@ pub trait ServerCarrier {
 
 pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: OutboundChannel> {
 
-    fn get_response_channel(&self) -> TokioThreadSafeDataManager<Box<INBOUND>>;
+    fn get_response_channel(self) -> Box<INBOUND>;
 
-    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<OUTBOUND>>>>;
+    fn get_command_channel(&self) -> Box<OUTBOUND>;
 }
 
 pub trait QueryCarrier<INBOUND: StreamInboundChannel + Sync + Send> {

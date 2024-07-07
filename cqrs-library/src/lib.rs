@@ -152,7 +152,7 @@ pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChanne
 
 pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel<>, OUTBOUND: OutboundChannel {
     settings: Config,
-    command_distributor: Arc<Mutex<CommandDistributor>>,
+    command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
     outbound_channel: TokioThreadSafeDataManager<OUTBOUND>,
     response_channel: TokioThreadSafeDataManager<INBOUND>
 }
@@ -163,7 +163,7 @@ impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandS
                outbound_channel: OUTBOUND) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
         StreamCommandServiceClient {
             settings,
-            command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
+            command_distributor: Arc::new(std::sync::Mutex::new(CommandDistributor::default())),
             response_channel: TokioThreadSafeDataManager::new(inbound_channel),
             outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
         }
@@ -174,7 +174,7 @@ impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandS
         let (tx, rx) = channel();
 
         {
-            let mut result1 = self.command_distributor.lock().await;
+            let mut result1 = self.command_distributor.lock().unwrap();
             result1.add(command_id.to_owned(), tx);
         }
 

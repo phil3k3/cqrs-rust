@@ -43,18 +43,20 @@ pub struct TokioServerCarrier {
 }
 
 pub struct TokioClientCarrier {
-    event_receiver: TokioThreadSafeDataManager<StreamTokioChannel>
+    event_receiver: TokioThreadSafeDataManager<StreamTokioChannel>,
+    response_channel: StreamProcessingTokioChannel,
+    command_channel: TokioOutboundChannel
 }
 
 
 impl ClientCarrier<StreamTokioChannel, TokioOutboundChannel> for TokioClientCarrier {
 
-    fn get_response_channel(&self) -> TokioThreadSafeDataManager<Box<StreamTokioChannel>> {
-        todo!()
+    fn get_response_channel(self) -> Box<StreamProcessingTokioChannel> {
+        return Box::new(self.response_channel);
     }
 
-    fn get_command_channel(&self) -> Arc<tokio::sync::Mutex<Option<Box<TokioOutboundChannel>>>> {
-        todo!()
+    fn get_command_channel(self) -> Box<TokioOutboundChannel> {
+        return Box::new(self.command_channel)
     }
 }
 
