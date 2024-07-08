@@ -9,7 +9,6 @@ use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::sync::oneshot::Receiver;
 use cqrs_library::{InboundChannel, MessageConsumer, MessageProcessor, OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
 use cqrs_library::locks::TokioThreadSafeDataManager;
 
@@ -61,7 +60,7 @@ impl StreamInboundProcessingChannel for StreamKafkaInboundChannel {
 }
 
 pub struct StreamProcessingTokioChannel {
-    pub(crate) receiver: TokioThreadSafeDataManager<Receiver<Vec<u8>>>
+    pub(crate) receiver: TokioThreadSafeDataManager<UnboundedReceiver<Vec<u8>>>
 }
 
 impl Clone for StreamProcessingTokioChannel {
@@ -72,13 +71,12 @@ impl Clone for StreamProcessingTokioChannel {
     }
 }
 
-
 #[async_trait]
 impl StreamInboundProcessingChannel for StreamProcessingTokioChannel {
     async fn consume_async_blocking(&mut self, message_consumer: Arc<Mutex<Box<dyn MessageProcessor + Send>>>, response_channel: Arc<Mutex<Box<dyn OutboundChannel + Send + Sync>>>) {
-        self.receiver.safe_call(move |item| {
+        self.receiver.safe_call(move |mut item| {
             let response_channel_cloned = response_channel.clone();
-            let result = futures::executor::block_on(item);
+            let result = futures::executor::block_on(item.recv());
             message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel_cloned);
         });
     }

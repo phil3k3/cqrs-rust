@@ -8,6 +8,8 @@ pub struct StdThreadSafeDataManager<D> {
 
 pub type TokioThreadSafeData<D> = Arc<tokio::sync::Mutex<Option<D>>>;
 
+pub type TokioArcMutexData<D> = Arc<tokio::sync::Mutex<D>>;
+
 impl<D> StdThreadSafeDataManager<D> {
 
     pub fn new(data: D) -> Self {
@@ -30,17 +32,44 @@ pub struct TokioThreadSafeDataManager<D> {
     data: TokioThreadSafeData<D>
 }
 
-impl<D> TokioThreadSafeDataManager<D> {
-    pub fn new(data: D) -> Self {
+pub struct TokioArcMutexDataManager<D> {
+    data: TokioArcMutexData<D>
+}
+
+impl<D> TokioArcMutexDataManager<D> {
+    pub(crate) fn new (data: Arc<tokio::sync::Mutex<D>>) -> Self {
         return Self {
-            data: Arc::new(tokio::sync::Mutex::new(Some(data))),
+            data
         }
     }
 
+    pub fn wrapped(data: D) -> Self {
+        return Self {
+            data: Arc::new(tokio::sync::Mutex::new(data))
+        }
+    }
+
+    pub async fn safe_call<F>(&self, func: F) where F: FnOnce(&mut D) {
+        let mut guard = self.data.lock().await;
+        func(&mut guard)
+    }
+}
+
+impl<D> TokioThreadSafeDataManager<D> {
+    pub fn new(data: Arc<tokio::sync::Mutex<Option<D>>>) -> Self {
+        return Self {
+            data
+        }
+    }
+
+    pub fn wrapped(data: D) -> Self {
+        return Self {
+            data: Arc::new(tokio::sync::Mutex::new(Option::from(data)))
+        }
+    }
 
     pub async fn safe_call<F>(&mut self, func: F) where F: FnOnce(D) {
-        let data_cloned = self.data.clone();
-        let mut guard = data_cloned.lock().await;
+        let mut guard = self.data.lock().await;
 
         if let Some(result) = guard.take() {
             func(result)
@@ -67,6 +96,14 @@ impl<D> Clone for StdThreadSafeDataManager<D> {
 impl<D> Clone for TokioThreadSafeDataManager<D> {
     fn clone(&self) -> Self {
         return TokioThreadSafeDataManager {
+            data: self.data.clone()
+        }
+    }
+}
+
+impl<D> Clone for TokioArcMutexDataManager<D> {
+    fn clone(&self) -> Self {
+        return TokioArcMutexDataManager {
             data: self.data.clone()
         }
     }

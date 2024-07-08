@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use config::Config;
 use cqrs_library::{OutboundChannel, StreamInboundChannel, StreamInboundProcessingChannel};
-use cqrs_library::locks::TokioThreadSafeDataManager;
+use cqrs_library::locks::{TokioArcMutexDataManager, TokioThreadSafeDataManager};
 
 pub mod inbound;
 pub mod outbound;
@@ -18,11 +18,11 @@ pub trait ServerCarrier {
      fn get_response_channel(&self, settings: Config) -> Arc<Mutex<Box<dyn OutboundChannel + Sync + Send>>>;
 }
 
-pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: OutboundChannel> {
+pub trait ClientCarrier<INBOUND: StreamInboundChannel + Sync + Send, OUTBOUND: OutboundChannel + Sync + Send> {
 
-    fn get_response_channel(self) -> Box<INBOUND>;
+    fn get_response_channel(&self) -> TokioArcMutexDataManager<INBOUND>;
 
-    fn get_command_channel(&self) -> Box<OUTBOUND>;
+    fn get_command_channel(&self) -> TokioThreadSafeDataManager<OUTBOUND>;
 }
 
 pub trait QueryCarrier<INBOUND: StreamInboundChannel + Sync + Send> {

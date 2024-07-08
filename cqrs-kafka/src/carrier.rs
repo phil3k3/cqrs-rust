@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 use config::Config;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot::{Receiver, Sender};
-use cqrs_library::locks::TokioThreadSafeDataManager;
+use cqrs_library::locks::{TokioArcMutexDataManager, TokioThreadSafeDataManager};
 use cqrs_library::{OutboundChannel, StreamInboundProcessingChannel};
 use crate::{ClientCarrier, QueryCarrier, ServerCarrier};
 use cqrs_library::outbound::TokioOutboundChannel;
@@ -15,22 +14,30 @@ pub struct TokioCarrier {
 impl TokioCarrier {
     pub(crate) fn new() -> (TokioServerCarrier, TokioClientCarrier) {
         let (event_sender, event_receiver) : (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = mpsc::unbounded_channel();
-        let (command_sender, command_receiver) : (Sender<Vec<u8>>, Receiver<Vec<u8>>) = tokio::sync::oneshot::channel();
+        let (command_sender, command_receiver) : (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = mpsc::unbounded_channel();
         let (command_response_sender, command_response_receiver) : (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) = mpsc::unbounded_channel();
 
-        let stream_processing_tokio_channel = StreamProcessingTokioChannel {
-            receiver: TokioThreadSafeDataManager::new(command_receiver),
+        let command_receiver_channel = StreamProcessingTokioChannel {
+            receiver: TokioThreadSafeDataManager::wrapped(command_receiver)
         };
+        let command_response_channel = TokioOutboundChannel::new(command_response_sender);
         let server = TokioServerCarrier {
             event_sender: Arc::new(Mutex::new(TokioOutboundChannel::new(event_sender))),
-            command_receiver: Arc::new(Mutex::new(stream_processing_tokio_channel)),
-            response_channel: Arc::new(Mutex::new(TokioOutboundChannel::new(command_response_sender)))
+            command_receiver: Arc::new(Mutex::new(command_receiver_channel)),
+            response_channel: Arc::new(Mutex::new(command_response_channel))
         };
-        let channel1 = StreamTokioChannel {
-            receiver: TokioThreadSafeDataManager::new(event_receiver),
+        let event_receiver_channel = StreamTokioChannel {
+            receiver: TokioThreadSafeDataManager::wrapped(event_receiver)
         };
+        let response_channel = StreamProcessingTokioChannel {
+            receiver: TokioThreadSafeDataManager::wrapped(command_response_receiver)
+        };
+        let command_sender_channel = TokioOutboundChannel::new(command_sender);
+
         let client = TokioClientCarrier {
-            event_receiver: TokioThreadSafeDataManager::new(channel1)
+            event_receiver: TokioThreadSafeDataManager::wrapped(event_receiver_channel),
+            response_channel: TokioArcMutexDataManager::wrapped(response_channel),
+            command_channel: TokioThreadSafeDataManager::wrapped(command_sender_channel)
         };
         return (server, client);
     }
@@ -44,19 +51,19 @@ pub struct TokioServerCarrier {
 
 pub struct TokioClientCarrier {
     event_receiver: TokioThreadSafeDataManager<StreamTokioChannel>,
-    response_channel: StreamProcessingTokioChannel,
-    command_channel: TokioOutboundChannel
+    response_channel: TokioArcMutexDataManager<StreamProcessingTokioChannel>,
+    command_channel: TokioThreadSafeDataManager<TokioOutboundChannel>
 }
 
 
-impl ClientCarrier<StreamTokioChannel, TokioOutboundChannel> for TokioClientCarrier {
+impl ClientCarrier<StreamProcessingTokioChannel, TokioOutboundChannel> for TokioClientCarrier {
 
-    fn get_response_channel(self) -> Box<StreamProcessingTokioChannel> {
-        return Box::new(self.response_channel);
+    fn get_response_channel(&self) -> TokioArcMutexDataManager<StreamProcessingTokioChannel> {
+        return self.response_channel.clone();
     }
 
-    fn get_command_channel(self) -> Box<TokioOutboundChannel> {
-        return Box::new(self.command_channel)
+    fn get_command_channel(&self) -> TokioThreadSafeDataManager<TokioOutboundChannel> {
+        return self.command_channel.clone();
     }
 }
 

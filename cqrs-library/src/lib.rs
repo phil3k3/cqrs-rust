@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use tokio::sync::oneshot::{channel, Sender};
 use tokio::task::JoinHandle;
 use crate::envelope::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
-use crate::locks::TokioThreadSafeDataManager;
+use crate::locks::{TokioArcMutexDataManager, TokioThreadSafeDataManager};
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -153,18 +153,18 @@ pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamI
     settings: Config,
     command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
     outbound_channel: TokioThreadSafeDataManager<OUTBOUND>,
-    response_channel: TokioThreadSafeDataManager<INBOUND>
+    response_channel: TokioArcMutexDataManager<INBOUND>
 }
 
 impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND,OUTBOUND> {
     pub fn new(settings: Config,
-               inbound_channel: INBOUND,
-               outbound_channel: OUTBOUND) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
+               inbound_channel: TokioArcMutexDataManager<INBOUND>,
+               outbound_channel: TokioThreadSafeDataManager<OUTBOUND>) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
         StreamCommandServiceClient {
             settings,
             command_distributor: Arc::new(std::sync::Mutex::new(CommandDistributor::default())),
-            response_channel: TokioThreadSafeDataManager::new(inbound_channel),
-            outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
+            response_channel: inbound_channel.clone(),
+            outbound_channel: outbound_channel.clone()
         }
     }
 
@@ -336,12 +336,12 @@ impl EventListener {
 impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChannel + Send + Sync + 'static> CommandServiceClient<INBOUND, OUTBOUND> {
 
     pub fn new(settings: Config,
-               inbound_channel: INBOUND,
-               outbound_channel: OUTBOUND) -> CommandServiceClient<INBOUND, OUTBOUND> {
+               inbound_channel: Arc<Mutex<INBOUND>>,
+               outbound_channel: Arc<Mutex<Option<OUTBOUND>>>) -> CommandServiceClient<INBOUND, OUTBOUND> {
         CommandServiceClient {
             settings,
             command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
-            inbound_channel: Arc::new(Mutex::new(inbound_channel)),
+            inbound_channel: inbound_channel.clone(),
             outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
         }
     }
