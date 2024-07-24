@@ -41,11 +41,22 @@ impl<'a> CommandStore {
         self.command_handlers.insert(String::from(command), handler);
     }
     fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut dyn EventProducer) -> Option<CommandServerResult> {
-        let command_response = self.command_handlers.get(command_type).unwrap()(command_accessor, event_producer);
-        Some(CommandServerResult {
-            command_response,
-            service_id: self.service_id.to_owned()
-        })
+        let option = self.command_handlers.get(command_type);
+        match option {
+            Some(command_handler) => {
+                let command_response = command_handler(command_accessor, event_producer);
+                Some(CommandServerResult {
+                    command_response,
+                    service_id: self.service_id.to_owned()
+                })
+            }
+            None => {
+                Some(CommandServerResult {
+                    command_response: CommandResponse::Unhandled,
+                    service_id: self.service_id.to_owned()
+                })
+            }
+        }
     }
 }
 
@@ -139,7 +150,7 @@ pub trait StreamInboundProcessingChannel {
 
 #[async_trait]
 pub trait StreamInboundChannel : Send + Sync {
-    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: Arc<std::sync::Mutex<Box<CONSUMER>>>);
+    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: TokioThreadSafeDataManager<CONSUMER>);
 }
 
 pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChannel, OUTBOUND: OutboundChannel {
@@ -153,12 +164,12 @@ pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamI
     settings: Config,
     command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
     outbound_channel: TokioThreadSafeDataManager<OUTBOUND>,
-    response_channel: TokioArcMutexDataManager<INBOUND>
+    response_channel: TokioThreadSafeDataManager<INBOUND>
 }
 
 impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND,OUTBOUND> {
     pub fn new(settings: Config,
-               inbound_channel: TokioArcMutexDataManager<INBOUND>,
+               inbound_channel: TokioThreadSafeDataManager<INBOUND>,
                outbound_channel: TokioThreadSafeDataManager<OUTBOUND>) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
         StreamCommandServiceClient {
             settings,
@@ -182,7 +193,7 @@ impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandS
         let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
         self.outbound_channel.safe_call(|mut result| {
             result.send(command.get_subject().as_bytes().to_vec(), serialized_command);
-        });
+        }).await;
         match rx.await {
             Ok(k) => k,
             Err(_) => panic!("error")
@@ -471,13 +482,12 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
                                           command_accessor: &CommandAccessor,
                                           service_id: String) -> Option<Vec<u8>> {
 
-    let command = &command_accessor.command_metadata;
+    let command_metadata = &command_accessor.command_metadata;
     let command_id = &command_accessor.command_id;
-    match command {
-        None => None,
-        Some(command) => {
+    match command_metadata {
+        None => {
             let command_response_result = CommandResponseResult {
-                entity_id: command.subject.to_owned(),
+                entity_id: None,
                 result: command_response.to_string()
             };
             let command_response_serialized = serde_json::to_string(&command_response_result).unwrap();
@@ -486,10 +496,27 @@ fn serialize_command_response_to_protobuf(command_response: CommandResponse,
                 command_id: String::from(command_id),
                 timestamp: Utc::now().timestamp(),
                 service_id: service_id.to_owned(),
-                r#type: String::from(&command.command_type),
-                version: command.version,
+                r#type: None,
+                version: None,
                 response: command_response_serialized.as_bytes().to_vec(),
-                error: None,
+                id: Uuid::new_v4().to_string()
+            };
+            Some(serialize_protobuf(&response_envelope))
+        },
+        Some(metadata) => {
+            let command_response_result = CommandResponseResult {
+                entity_id: Some(metadata.subject.to_owned()),
+                result: command_response.to_string()
+            };
+            let command_response_serialized = serde_json::to_string(&command_response_result).unwrap();
+            let response_envelope = CommandResponseEnvelopeProto {
+                transaction_id: Uuid::new_v4().to_string(),
+                command_id: String::from(command_id),
+                timestamp: Utc::now().timestamp(),
+                service_id: service_id.to_owned(),
+                r#type: Some(String::from(&metadata.command_type)),
+                version: Some(metadata.version),
+                response: command_response_serialized.as_bytes().to_vec(),
                 id: Uuid::new_v4().to_string()
             };
             Some(serialize_protobuf(&response_envelope))
@@ -506,29 +533,46 @@ fn serialize_protobuf<M: Message+Sized>(envelope: &M) -> Vec<u8> {
 }
 
 fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut EventProducerImpl) -> Option<Vec<u8>> {
-    let result = envelope::CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
+    let decode1 = envelope::CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command));
+    match decode1 {
+        Ok(result) => {
+            let mut deserializer = CommandAccessor::new(&result.command, result.id);
 
-    let mut deserializer = CommandAccessor::new(&result.command, result.id);
+            let command_response = command_store.handle_command(&result.r#type, &mut deserializer, event_producer);
 
-    let command_response = command_store.handle_command(&result.r#type, &mut deserializer, event_producer);
-
-    match command_response {
-        None => None,
-        Some(command_server_result) => {
-            let option = serialize_command_response_to_protobuf(
-                command_server_result.command_response,
-                &deserializer,
-                command_server_result.service_id
-            );
-            Some(option.unwrap())
+            match command_response {
+                None => None,
+                Some(command_server_result) => {
+                    let option = serialize_command_response_to_protobuf(
+                        command_server_result.command_response,
+                        &deserializer,
+                        command_server_result.service_id
+                    );
+                    match option {
+                        Some(k) => Some(k),
+                        None => None
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            println!("{}", err);
+            None
         }
     }
+
+
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CommandResponseResult {
-    entity_id: String,
+    entity_id: Option<String>,
     result: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct UnhandledCommandResponseResult {
+    result: String
 }
 
 #[cfg(test)]

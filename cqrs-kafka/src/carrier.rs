@@ -2,11 +2,11 @@ use std::sync::{Arc, Mutex};
 use config::Config;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use cqrs_library::locks::{TokioArcMutexDataManager, TokioThreadSafeDataManager};
+use cqrs_library::locks::{TokioThreadSafeDataManager};
 use cqrs_library::{OutboundChannel, StreamInboundProcessingChannel};
 use crate::{ClientCarrier, QueryCarrier, ServerCarrier};
 use cqrs_library::outbound::TokioOutboundChannel;
-use crate::inbound::{StreamProcessingTokioChannel, StreamTokioChannel};
+use crate::inbound::{StreamProcessingTokioChannel, TokioInboundChannel};
 
 pub struct TokioCarrier {
 }
@@ -26,17 +26,17 @@ impl TokioCarrier {
             command_receiver: Arc::new(Mutex::new(command_receiver_channel)),
             response_channel: Arc::new(Mutex::new(command_response_channel))
         };
-        let event_receiver_channel = StreamTokioChannel {
+        let event_receiver_channel = TokioInboundChannel {
             receiver: TokioThreadSafeDataManager::wrapped(event_receiver)
         };
-        let response_channel = StreamProcessingTokioChannel {
+        let response_channel = TokioInboundChannel {
             receiver: TokioThreadSafeDataManager::wrapped(command_response_receiver)
         };
         let command_sender_channel = TokioOutboundChannel::new(command_sender);
 
         let client = TokioClientCarrier {
             event_receiver: TokioThreadSafeDataManager::wrapped(event_receiver_channel),
-            response_channel: TokioArcMutexDataManager::wrapped(response_channel),
+            response_channel: TokioThreadSafeDataManager::wrapped(response_channel),
             command_channel: TokioThreadSafeDataManager::wrapped(command_sender_channel)
         };
         return (server, client);
@@ -50,15 +50,15 @@ pub struct TokioServerCarrier {
 }
 
 pub struct TokioClientCarrier {
-    event_receiver: TokioThreadSafeDataManager<StreamTokioChannel>,
-    response_channel: TokioArcMutexDataManager<StreamProcessingTokioChannel>,
+    event_receiver: TokioThreadSafeDataManager<TokioInboundChannel>,
+    response_channel: TokioThreadSafeDataManager<TokioInboundChannel>,
     command_channel: TokioThreadSafeDataManager<TokioOutboundChannel>
 }
 
 
-impl ClientCarrier<StreamProcessingTokioChannel, TokioOutboundChannel> for TokioClientCarrier {
+impl ClientCarrier<TokioInboundChannel, TokioOutboundChannel> for TokioClientCarrier {
 
-    fn get_response_channel(&self) -> TokioArcMutexDataManager<StreamProcessingTokioChannel> {
+    fn get_response_channel(&self) -> TokioThreadSafeDataManager<TokioInboundChannel> {
         return self.response_channel.clone();
     }
 
@@ -67,8 +67,8 @@ impl ClientCarrier<StreamProcessingTokioChannel, TokioOutboundChannel> for Tokio
     }
 }
 
-impl QueryCarrier<StreamTokioChannel> for TokioClientCarrier {
-    fn get_event_channel(&self) -> TokioThreadSafeDataManager<StreamTokioChannel> {
+impl QueryCarrier<TokioInboundChannel> for TokioClientCarrier {
+    fn get_event_channel(&self) -> TokioThreadSafeDataManager<TokioInboundChannel> {
         return self.event_receiver.clone();
     }
 }

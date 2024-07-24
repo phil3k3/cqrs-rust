@@ -23,17 +23,10 @@ message CommandResponseEnvelopeProto {
     string commandId = 2;
     int64 timestamp = 3;
     string serviceId = 4;
-    string type = 5;
-    int32 version = 6;
+    optional string type = 5;
+    optional int32 version = 6;
     bytes response = 7;
-    GenericApiErrorProto error = 8;
     string id = 9;
-}
-
-message GenericApiErrorProto {
-    string message = 1;
-    string developerMessage = 2;
-    string errorCode = 3;
 }
 
 message DomainEventEnvelopeProto {

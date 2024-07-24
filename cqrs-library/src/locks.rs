@@ -69,10 +69,14 @@ impl<D> TokioThreadSafeDataManager<D> {
     }
 
     pub async fn safe_call<F>(&mut self, func: F) where F: FnOnce(D) {
-        let mut guard = self.data.lock().await;
+        print!("Test");
+        let x = self.data.lock();
+        let mut guard = x.await;
 
         if let Some(result) = guard.take() {
             func(result)
+        } else {
+            panic!("TEST")
         }
     }
     pub async fn safe_call_multiple_async<F, Fut>(&mut self, func: F) where F: Fn(D) -> Fut, Fut: Future<Output = ()> {
@@ -81,6 +85,17 @@ impl<D> TokioThreadSafeDataManager<D> {
 
         if let Some(result) = guard.take() {
             func(result).await
+        }
+    }
+
+    pub async fn safe_call_multiple_async_return<F, Fut, T>(&mut self, func: F) -> Option<T> where F: Fn(D) -> Fut, Fut: Future<Output = T> {
+        let data_cloned = self.data.clone();
+        let mut guard = data_cloned.lock().await;
+
+        if let Some(result) = guard.take() {
+            Some(func(result).await)
+        } else {
+            None
         }
     }
 }

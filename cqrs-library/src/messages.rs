@@ -15,6 +15,7 @@ pub struct CommandServerResult {
 pub enum CommandResponse {
     Ok,
     Error,
+    Unhandled,
 }
 
 impl Display for CommandResponse {
@@ -25,6 +26,9 @@ impl Display for CommandResponse {
             }
             CommandResponse::Error => {
                 write!(f, "Error")
+            }
+            CommandResponse::Unhandled => {
+                write!(f, "Unhandled")
             }
         }
     }

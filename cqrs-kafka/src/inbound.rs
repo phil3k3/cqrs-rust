@@ -78,22 +78,24 @@ impl StreamInboundProcessingChannel for StreamProcessingTokioChannel {
             let response_channel_cloned = response_channel.clone();
             let result = futures::executor::block_on(item.recv());
             message_consumer.lock().unwrap().consume(result.unwrap().as_slice(), response_channel_cloned);
-        });
+        }).await;
     }
 }
 
-pub struct StreamTokioChannel {
+pub struct TokioInboundChannel {
     pub(crate) receiver: TokioThreadSafeDataManager<UnboundedReceiver<Vec<u8>>>
 }
 
 #[async_trait]
-impl StreamInboundChannel for StreamTokioChannel {
-    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: Arc<Mutex<Box<CONSUMER>>>) {
-        self.receiver.safe_call(move |mut item| {
+impl StreamInboundChannel for TokioInboundChannel {
+    async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, mut message_consumer: TokioThreadSafeDataManager<CONSUMER>) {
+        self.receiver.safe_call(move |mut item| async {
             loop {
                 match item.try_recv() {
                     Ok(message) => {
-                        message_consumer.lock().unwrap().consume(message.as_slice());
+                        message_consumer.safe_call(|item2| {
+                            item2.consume(message.as_slice());
+                        }).await;
                     }
                     _ => {}
                 }
