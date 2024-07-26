@@ -3,19 +3,17 @@ use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
 use config::Config;
 use prost::Message;
-use log::{debug, error, info};
+use log::{debug, error};
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::{channel, Sender};
-use tokio::task::JoinHandle;
 use crate::envelope::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
-use crate::locks::{TokioArcMutexDataManager, TokioThreadSafeDataManager};
+use crate::locks::TokioThreadSafeDataManager;
 pub use crate::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 
 pub mod envelope {
@@ -153,28 +151,19 @@ pub trait StreamInboundChannel : Send + Sync {
     async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, message_consumer: TokioThreadSafeDataManager<CONSUMER>);
 }
 
-pub struct CommandServiceClient<INBOUND, OUTBOUND> where INBOUND : InboundChannel, OUTBOUND: OutboundChannel {
+
+pub struct StreamCommandServiceClient<OUTBOUND> where OUTBOUND: OutboundChannel {
     settings: Config,
-    command_distributor: Arc<Mutex<CommandDistributor>>,
-    inbound_channel: Arc<Mutex<INBOUND>>,
+    command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
     outbound_channel: TokioThreadSafeDataManager<OUTBOUND>
 }
 
-pub struct StreamCommandServiceClient<INBOUND, OUTBOUND> where INBOUND : StreamInboundChannel<>, OUTBOUND: OutboundChannel {
-    settings: Config,
-    command_distributor: Arc<std::sync::Mutex<CommandDistributor>>,
-    outbound_channel: TokioThreadSafeDataManager<OUTBOUND>,
-    response_channel: TokioThreadSafeDataManager<INBOUND>
-}
-
-impl<'a, INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> StreamCommandServiceClient<INBOUND,OUTBOUND> {
+impl<'a, OUTBOUND: OutboundChannel> StreamCommandServiceClient<OUTBOUND> {
     pub fn new(settings: Config,
-               inbound_channel: TokioThreadSafeDataManager<INBOUND>,
-               outbound_channel: TokioThreadSafeDataManager<OUTBOUND>) -> StreamCommandServiceClient<INBOUND, OUTBOUND> {
+               outbound_channel: TokioThreadSafeDataManager<OUTBOUND>) -> StreamCommandServiceClient<OUTBOUND> {
         StreamCommandServiceClient {
             settings,
             command_distributor: Arc::new(std::sync::Mutex::new(CommandDistributor::default())),
-            response_channel: inbound_channel.clone(),
             outbound_channel: outbound_channel.clone()
         }
     }
@@ -268,7 +257,7 @@ impl CommandDistributor {
     }
 }
 
-impl<INBOUND: StreamInboundChannel, OUTBOUND: OutboundChannel> MessageConsumer for StreamCommandServiceClient<INBOUND, OUTBOUND> {
+impl<OUTBOUND: OutboundChannel> MessageConsumer for StreamCommandServiceClient<OUTBOUND> {
     fn consume(&self, command_response_message: &[u8]) {
         let result = self.command_distributor.clone();
         let mut result2 = result.lock().unwrap();
@@ -344,67 +333,6 @@ impl EventListener {
     }
 }
 
-impl<'a, INBOUND: InboundChannel + Send + Sync + 'static, OUTBOUND: OutboundChannel + Send + Sync + 'static> CommandServiceClient<INBOUND, OUTBOUND> {
-
-    pub fn new(settings: Config,
-               inbound_channel: Arc<Mutex<INBOUND>>,
-               outbound_channel: Arc<Mutex<Option<OUTBOUND>>>) -> CommandServiceClient<INBOUND, OUTBOUND> {
-        CommandServiceClient {
-            settings,
-            command_distributor: Arc::new(Mutex::new(CommandDistributor::default())),
-            inbound_channel: inbound_channel.clone(),
-            outbound_channel: TokioThreadSafeDataManager::new(outbound_channel)
-        }
-    }
-
-    pub fn start(self: Arc<Self>) -> JoinHandle<()> {
-
-        return tokio::task::spawn(async move {
-            let me = Arc::clone(&self);
-                loop {
-                    let mut result1 = me.inbound_channel.lock().await;
-                    let result = result1.consume();
-                    match result {
-                        None => info!("No result"),
-                        Some(data) => {
-                            let mut result = me.command_distributor.lock().await;
-                            result.distribute(data.as_slice());
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                }
-        })
-    }
-
-    pub async fn send_command<C: SerializableCommand<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
-        let command_id = Uuid::new_v4().to_string();
-        let (tx, rx) = channel();
-
-        {
-            let mut result1 = self.command_distributor.lock().await;
-            result1.add(command_id.to_owned(), tx);
-        }
-
-        let service_id = self.settings.get_string("service_id").unwrap();
-        let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
-        let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
-        self.outbound_channel.safe_call(|mut result| {
-            result.send(command.get_subject().as_bytes().to_vec(), serialized_command);
-        });
-        match rx.await {
-            Ok(k) => k,
-            Err(_) => panic!("error")
-        }
-    }
-
-    pub fn send_command_async<C: SerializableCommand<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
-        let command_id = Uuid::new_v4().to_string();
-        let service_id = self.settings.get_string("service_id").unwrap();
-        let service_instance_id = self.settings.get_int("service_instance_id").unwrap() as u32;
-        let serialized_command = serialize_command_to_protobuf(&command_id, command, service_id, service_instance_id);
-        command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
-    }
-}
 
 pub struct CommandServiceServer {
     command_store: CommandStore,

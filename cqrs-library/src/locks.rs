@@ -32,29 +32,6 @@ pub struct TokioThreadSafeDataManager<D> {
     data: TokioThreadSafeData<D>
 }
 
-pub struct TokioArcMutexDataManager<D> {
-    data: TokioArcMutexData<D>
-}
-
-impl<D> TokioArcMutexDataManager<D> {
-    pub(crate) fn new (data: Arc<tokio::sync::Mutex<D>>) -> Self {
-        return Self {
-            data
-        }
-    }
-
-    pub fn wrapped(data: D) -> Self {
-        return Self {
-            data: Arc::new(tokio::sync::Mutex::new(data))
-        }
-    }
-
-    pub async fn safe_call<F>(&self, func: F) where F: FnOnce(&mut D) {
-        let mut guard = self.data.lock().await;
-        func(&mut guard)
-    }
-}
-
 impl<D> TokioThreadSafeDataManager<D> {
     pub fn new(data: Arc<tokio::sync::Mutex<Option<D>>>) -> Self {
         return Self {
@@ -79,6 +56,29 @@ impl<D> TokioThreadSafeDataManager<D> {
             panic!("TEST")
         }
     }
+
+    pub async fn safe_call_multiple<F>(&mut self, func: F) where F: Fn(D) {
+        print!("Test");
+        let x = self.data.lock();
+        let mut guard = x.await;
+
+        if let Some(result) = guard.take() {
+            func(result)
+        } else {
+            panic!("TEST")
+        }
+    }
+
+
+    pub async fn safe_call_async<F, Fut>(&mut self, func: F) where F: FnOnce(D) -> Fut, Fut: Future<Output = ()> {
+        let data_cloned = self.data.clone();
+        let mut guard = data_cloned.lock().await;
+
+        if let Some(result) = guard.take() {
+            func(result).await
+        }
+    }
+
     pub async fn safe_call_multiple_async<F, Fut>(&mut self, func: F) where F: Fn(D) -> Fut, Fut: Future<Output = ()> {
         let data_cloned = self.data.clone();
         let mut guard = data_cloned.lock().await;
@@ -88,12 +88,13 @@ impl<D> TokioThreadSafeDataManager<D> {
         }
     }
 
-    pub async fn safe_call_multiple_async_return<F, Fut, T>(&mut self, func: F) -> Option<T> where F: Fn(D) -> Fut, Fut: Future<Output = T> {
+    pub async fn safe_call_multiple_async_return<F, Fut, T>(&mut self, func: F) -> Option<T> where F: Fn(D) -> Fut, Fut: Future<Output = T>+Sized {
         let data_cloned = self.data.clone();
         let mut guard = data_cloned.lock().await;
 
         if let Some(result) = guard.take() {
-            Some(func(result).await)
+            let t = func(result).await;
+            Some(t)
         } else {
             None
         }
@@ -111,14 +112,6 @@ impl<D> Clone for StdThreadSafeDataManager<D> {
 impl<D> Clone for TokioThreadSafeDataManager<D> {
     fn clone(&self) -> Self {
         return TokioThreadSafeDataManager {
-            data: self.data.clone()
-        }
-    }
-}
-
-impl<D> Clone for TokioArcMutexDataManager<D> {
-    fn clone(&self) -> Self {
-        return TokioArcMutexDataManager {
             data: self.data.clone()
         }
     }

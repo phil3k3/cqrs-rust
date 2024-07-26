@@ -89,18 +89,18 @@ pub struct TokioInboundChannel {
 #[async_trait]
 impl StreamInboundChannel for TokioInboundChannel {
     async fn consume_async_blocking<CONSUMER: MessageConsumer + Send>(&mut self, mut message_consumer: TokioThreadSafeDataManager<CONSUMER>) {
-        self.receiver.safe_call(move |mut item| async {
+        self.receiver.safe_call_async(move |mut item| async move {
             loop {
                 match item.try_recv() {
                     Ok(message) => {
-                        message_consumer.safe_call(|item2| {
-                            item2.consume(message.as_slice());
-                        }).await;
-                    }
+                            message_consumer.safe_call_multiple(|item2| {
+                                item2.consume(message.as_slice());
+                            }).await;
+                        }
                     _ => {}
                 }
             }
-        }).await
+        }).await;
     }
 }
 

@@ -54,23 +54,25 @@ impl<AGGREGATE: Default + Sync + Send, CARRIER: ServerCarrier + Sync + Send> Cqr
 }
 
 struct CqrsClient<INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> {
-    command_sender: Arc<Mutex<CommandSender<INBOUND, OUTBOUND>>>,
-    command_service_client: TokioThreadSafeDataManager<StreamCommandServiceClient<INBOUND, OUTBOUND>>,
+    command_sender: Arc<Mutex<CommandSender<OUTBOUND>>>,
+    command_service_client: TokioThreadSafeDataManager<StreamCommandServiceClient<OUTBOUND>>,
     response_channel: TokioThreadSafeDataManager<INBOUND>
 }
 
-struct CommandSender<INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> {
-    command_service_client: TokioThreadSafeDataManager<StreamCommandServiceClient<INBOUND, OUTBOUND>>
+struct CommandSender<OUTBOUND: OutboundChannel> {
+    command_service_client: TokioThreadSafeDataManager<StreamCommandServiceClient<OUTBOUND>>
 }
 
-impl<INBOUND: StreamInboundChannel + 'static,OUTBOUND: OutboundChannel + 'static> CommandSender<INBOUND,OUTBOUND> {
+impl<OUTBOUND: OutboundChannel + 'static> CommandSender<OUTBOUND> {
+
     pub async fn send<'aggregate, A : Aggregate<'aggregate>>(&mut self, command: A::Command) -> Option<CommandResponse> {
-        return self.command_service_client.safe_call_multiple_async_return(|mut result2| {
-            let fut = async move {
+        let abc : Option<CommandResponse> = self.command_service_client.safe_call_multiple_async_return(|mut result2| {
+            let abc = async move {
                 result2.send_command(&command).await;
             };
-            return fut;
-        }).await
+            return abc;
+        }).await;
+        return abc;
     }
 }
 
@@ -79,7 +81,6 @@ impl<INBOUND: StreamInboundChannel+'static,OUTBOUND: OutboundChannel+'static> Cq
     pub fn new<CARRIER: ClientCarrier<INBOUND,OUTBOUND>>(settings: Config, carrier: CARRIER) -> Self {
         let command_service_client = StreamCommandServiceClient::new(
             settings.clone(),
-            carrier.get_response_channel(),
             carrier.get_command_channel()
         );
         let manager = TokioThreadSafeDataManager::wrapped(command_service_client);
@@ -99,11 +100,12 @@ impl<INBOUND: StreamInboundChannel+'static,OUTBOUND: OutboundChannel+'static> Cq
         return sender.send::<A>(_command).await;
     }
 
-    pub fn start(mut self) -> JoinHandle<()> {
+    pub fn start(&mut self) -> JoinHandle<()> {
         let listener1 = self.command_service_client.clone();
+        let mut response_channel = self.response_channel.clone();
         return tokio::spawn(async move {
             let listener2 = listener1.clone();
-            self.response_channel.safe_call_multiple_async(|mut result| {
+            response_channel.safe_call_multiple_async(|mut result| {
                 let listener3 =  listener2.clone();
                 let fut = async move {
                     result.consume_async_blocking(listener3).await;
@@ -132,14 +134,14 @@ impl<INBOUND: StreamInboundChannel+ 'static> CqrsQuery<INBOUND> {
 
     pub fn start(mut self) -> JoinHandle<()> {
         let listener1 = self.event_listener.clone();
-        return tokio::spawn({
-            let rt_handle = tokio::runtime::Handle::current();
+        return tokio::spawn(async move {
             let listener2 = listener1.clone();
-            rt_handle.block_on(self.event_channel.safe_call(|mut result| {
-                async {
-                    result.consume_async_blocking(listener2).await;
+            return self.event_channel.safe_call_multiple_async(|mut result| {
+                let value = listener2.clone();
+                async move {
+                    result.consume_async_blocking(value).await;
                 }
-            }));
+            }).await;
         });
     }
 }
@@ -261,8 +263,8 @@ mod test {
         let cqrs_query = CqrsQuery::new("UserCreated", handle_user_created, client.get_event_channel());
         cqrs_query.start();
 
-        let client = CqrsClient::new(settings.clone(), client);
-        let join_handle = &client.start();
+        let mut client = CqrsClient::new(settings.clone(), client);
+        let join_handle = client.start();
         let response = client.send_command::<User>(UserCommand::Create {
             user_id: "1".to_string()
         }).await;
@@ -271,7 +273,7 @@ mod test {
         assert_eq!(CommandResponse::Ok, response.expect("TEST"));
 
         handle.await.unwrap();
-        join_handle.await.unwrap();
+        join_handle.abort();
     }
 
     #[tokio::test]
