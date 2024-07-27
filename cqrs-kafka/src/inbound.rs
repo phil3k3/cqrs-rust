@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use futures::TryStreamExt;
-use log::info;
+use log::{error, info};
 use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
@@ -97,7 +97,9 @@ impl StreamInboundChannel for TokioInboundChannel {
                                 item2.consume(message.as_slice());
                             }).await;
                         }
-                    _ => {}
+                    Err(e) => {
+                        error!("Receive error {}", e.to_string());
+                    }
                 }
             }
         }).await;

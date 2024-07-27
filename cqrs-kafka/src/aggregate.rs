@@ -60,19 +60,21 @@ struct CqrsClient<INBOUND: StreamInboundChannel,OUTBOUND: OutboundChannel> {
 }
 
 struct CommandSender<OUTBOUND: OutboundChannel> {
-    command_service_client: TokioThreadSafeDataManager<StreamCommandServiceClient<OUTBOUND>>
+    command_service_client: Arc<tokio::sync::Mutex<Option<StreamCommandServiceClient<OUTBOUND>>>>
 }
 
 impl<OUTBOUND: OutboundChannel + 'static> CommandSender<OUTBOUND> {
 
     pub async fn send<'aggregate, A : Aggregate<'aggregate>>(&mut self, command: A::Command) -> Option<CommandResponse> {
-        let abc : Option<CommandResponse> = self.command_service_client.safe_call_multiple_async_return(|mut result2| {
-            let abc = async move {
-                result2.send_command(&command).await;
-            };
-            return abc;
-        }).await;
-        return abc;
+        let arc = self.command_service_client.clone();
+        let mut guard = arc.lock().await;
+
+        if let Some(mut result) = guard.take() {
+            return Some(result.send_command(&command).await)
+        }
+        else {
+            None
+        }
     }
 }
 
@@ -83,13 +85,12 @@ impl<INBOUND: StreamInboundChannel+'static,OUTBOUND: OutboundChannel+'static> Cq
             settings.clone(),
             carrier.get_command_channel()
         );
-        let manager = TokioThreadSafeDataManager::wrapped(command_service_client);
-
-        let command_sender = CommandSender {command_service_client: manager.clone()};
+        let arc = Arc::new(tokio::sync::Mutex::new(Some(command_service_client)));
+        let command_sender = CommandSender {command_service_client: arc.clone() };
 
         return CqrsClient {
             command_sender: Arc::new(Mutex::new(command_sender)),
-            command_service_client: manager.clone(),
+            command_service_client: TokioThreadSafeDataManager::new(arc.clone()),
             response_channel: carrier.get_response_channel()
         };
     }

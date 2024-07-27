@@ -46,7 +46,6 @@ impl<D> TokioThreadSafeDataManager<D> {
     }
 
     pub async fn safe_call<F>(&mut self, func: F) where F: FnOnce(D) {
-        print!("Test");
         let x = self.data.lock();
         let mut guard = x.await;
 
@@ -96,7 +95,7 @@ impl<D> TokioThreadSafeDataManager<D> {
             let t = func(result).await;
             Some(t)
         } else {
-            None
+            panic!("Nothing happens");
         }
     }
 }
