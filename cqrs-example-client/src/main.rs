@@ -1,5 +1,4 @@
 use std::{env, io};
-use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 use config::Config;
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
@@ -70,11 +69,25 @@ async fn post_user(
     dbg!(&command);
     info!("Creating user {}", command.name);
 
-    let result = command_service_client.client.lock().unwrap().send_command(&command).await;
-    if result == CommandResponse::Ok {
-        HttpResponse::Ok().body(command.user_id)
-    } else {
-        HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+    match command_service_client.client.lock() {
+        Ok(mut lock_result) => {
+            let result = lock_result.send_command(&command).await;
+            match result {
+                Ok(result) => {
+                    if result == CommandResponse::Ok {
+                        HttpResponse::Ok().body(command.user_id)
+                    } else {
+                        HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+                    }
+                }
+                Err(_) => {
+                    HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+                }
+            }
+        }
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+        }
     }
 }
 
@@ -138,7 +151,14 @@ async fn main() -> io::Result<()> {
                 )
             }
         );
-        command_service_client_data.client.lock().unwrap().start(settings_inner);
+        match command_service_client_data.client.lock() {
+            Ok(mut guard) => {
+                guard.start(settings_inner);
+            }
+            Err(_) => {
+                panic!("Could not lock mutex");
+            }
+        }
         App::new()
             .app_data(command_service_client_data.clone())
             .service(post_user)

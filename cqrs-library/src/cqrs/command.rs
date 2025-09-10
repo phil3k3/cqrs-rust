@@ -13,8 +13,8 @@ pub struct CommandAccessor<'a> {
 }
 impl<'a> CommandAccessor<'a> {
 
-    pub fn new(serialized_command: &Vec<u8>, command_id: String) -> CommandAccessor {
-        CommandAccessor {
+    pub fn new(serialized_command: &'a Vec<u8>, command_id: String) -> CommandAccessor {
+        CommandAccessor { 
             serialized_command,
             command_id,
             command_metadata: None

@@ -1,6 +1,5 @@
-use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use std::fmt::{Display, Formatter};
 
 pub struct CommandMetadata {
     pub(crate) subject: String,

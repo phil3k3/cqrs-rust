@@ -4,7 +4,6 @@ pub mod traits;
 
 pub mod messages;
 mod operations;
-
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::ops::Deref;
@@ -22,6 +21,8 @@ use crate::cqrs::traits::{Command, Event, EventProducer, InboundChannel, Outboun
 use cqrs_messages::cqrs::messages::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
 use crate::cqrs::operations::{handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf};
+
+use crate::prelude::*;
 
 pub struct CqrsEventProducer {
     service_id: String,
@@ -147,7 +148,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         })
     }
 
-    pub async fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> CommandResponse {
+    pub async fn send_command<C: Command<'a>+?Sized>(&mut self, command: &C) -> Result<CommandResponse> {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(&command_id, command, String::from(&self.service_id), self.service_instance_id);
         let (tx, rx) = channel();
@@ -160,10 +161,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
 
         self.command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
 
-        match rx.await {
-            Ok(k) => k,
-            Err(_) => panic!("error")
-        }
+        rx.await.map_err(|x| x.into())
     }
 
     pub fn send_command_async<C: Command<'a>+?Sized>(&mut self, command: &C, command_channel: &mut (dyn OutboundChannel + Send + Sync)) {
@@ -173,38 +171,31 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
     }
 
     fn read_response(command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
-        let serialized_message = command_response_channel.consume();
-        match serialized_message {
-            None => {
-                debug!("No response");
-                None
-            }
-            Some(message) => {
-                let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
-                match result {
-                    Ok(command_response) => {
-                        let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
-                        match command_response_result {
-                            Ok(crr) => {
-                                if crr.result.eq("Ok") {
-                                    Some((CommandResponse::Ok, command_response.command_id))
-                                } else {
-                                    Some((CommandResponse::Error, command_response.command_id))
-                                }
-                            }
-                            Err(err) =>  {
-                                error!("{}", err);
-                                None
+        command_response_channel.consume().map(|message| {
+            let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
+            match result {
+                Ok(command_response) => {
+                    let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);
+                    match command_response_result {
+                        Ok(crr) => {
+                            if crr.result.eq("Ok") {
+                                Some((CommandResponse::Ok, command_response.command_id))
+                            } else {
+                                Some((CommandResponse::Error, command_response.command_id))
                             }
                         }
-                    }
-                    Err(err) => {
-                        error!("{}", err);
-                        None
+                        Err(err) =>  {
+                            error!("{}", err);
+                            None
+                        }
                     }
                 }
+                Err(err) => {
+                    error!("{}", err);
+                    None
+                }
             }
-        }
+        }).flatten()
     }
 }
 
@@ -416,7 +407,7 @@ mod tests {
 
         let config = Config::builder().set_default("a", "b").unwrap().build();
         let client_handle = command_service_client.start(config.unwrap());
-        let actual_command_response = command_service_client.send_command(&command).await;
+        let actual_command_response = command_service_client.send_command(&command).await.unwrap();
         assert_eq!(actual_command_response, CommandResponse::Ok);
 
         client_handle.abort();

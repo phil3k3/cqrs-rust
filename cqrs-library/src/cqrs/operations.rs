@@ -46,8 +46,6 @@ pub fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore
     }
 }
 
-
-
 pub fn serialize_command_to_protobuf<'a, C: Command<'a>>(command_id: &str, command: &C, service_id: String, service_instance_id: u32) -> Vec<u8> {
     let serialized_command = serde_json::to_vec(command).unwrap();
     let service_instance_id_i32 = service_instance_id as i32;
