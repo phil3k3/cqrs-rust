@@ -39,11 +39,11 @@ struct UserCreatedEvent {
 #[typetag::serde]
 impl Event for UserCreatedEvent {
     fn get_id(&self) -> String {
-        return self.user_id.to_owned();
+        self.user_id.to_owned()
     }
 
     fn get_type(&self) -> String {
-        return String::from("UserCreatedEvent");
+        String::from("UserCreatedEvent")
     }
 }
 
@@ -69,11 +69,11 @@ async fn post_user(
 }
 
 fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
-    return Box::new(KafkaInboundChannel::new(
+    Box::new(KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-    ));
+    ))
 }
 
 #[tokio::main]

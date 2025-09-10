@@ -70,18 +70,13 @@ fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &s
 }
 
 
-
-
-
 pub struct CommandServiceClient<T> {
     service_id: String,
     service_instance_id: u32,
     command_channel: Box<dyn OutboundChannel + Sync + Send>,
     pending_responses_senders: Arc<Mutex<HashMap<String, Sender<CommandResponse>>>>,
-    // running: Arc<Mutex<bool>>,
     channel_builder: InboundChannelBuilder<T>
 }
-
 
 type InboundChannelBuilder<T> = Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Box<T> + Sync + Send>>>>;
 
@@ -159,7 +154,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         let pending_responses_senders = self.pending_responses_senders.clone();
         let channel_reader = self.channel_builder.clone();
 
-        return tokio::task::spawn(async move {
+        tokio::task::spawn(async move {
             let mut guard = channel_reader.lock().await;
             if let Some(func) = guard.take() {
                 let mut channel = func(settings);
@@ -442,7 +437,7 @@ mod tests {
 
     impl TokioOutboundChannel {
         fn new(sender: Sender<Vec<u8>>) -> Self {
-            return TokioOutboundChannel {
+            TokioOutboundChannel {
                 sender: Some(sender)
             }
         }
@@ -467,7 +462,7 @@ mod tests {
                     Ok(k) => Some(k),
                     Err(_) => None
                 };
-                return result;
+                result
             } else  {
                 None
             }

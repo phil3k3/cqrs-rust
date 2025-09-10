@@ -42,11 +42,11 @@ struct UserCreatedEvent {
 #[typetag::serde]
 impl Event for UserCreatedEvent {
     fn get_id(&self) -> String {
-        return self.user_id.to_owned();
+        self.user_id.to_owned()
     }
 
     fn get_type(&self) -> String {
-        return String::from("UserCreatedEvent");
+        String::from("UserCreatedEvent")
     }
 }
 

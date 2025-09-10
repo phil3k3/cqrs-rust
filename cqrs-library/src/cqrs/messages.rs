@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use uuid::Uuid;
 
 pub struct CommandMetadata {
     pub(crate) subject: String,
@@ -9,6 +10,11 @@ pub struct CommandMetadata {
 pub struct CommandServerResult {
     pub(crate) command_response: CommandResponse,
     pub(crate) service_id: String,
+}
+
+pub struct CarrierEvent {
+    pub payload: Vec<u8>,
+    pub event_id: Uuid
 }
 
 #[derive(PartialEq, Debug)]

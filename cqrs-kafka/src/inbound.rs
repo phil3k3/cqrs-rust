@@ -109,7 +109,7 @@ impl StreamKafkaInboundChannel {
 
 impl InboundChannel for KafkaInboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>> {
-        return self.consumer.poll(Duration::from_secs(1))
+        self.consumer.poll(Duration::from_secs(1))
                 .and_then(|x| {
                     match x {
                         Ok(t) => {
@@ -121,6 +121,6 @@ impl InboundChannel for KafkaInboundChannel {
                         Err(_v) => None
                     }
                 }
-                );
+                )
     }
 }
