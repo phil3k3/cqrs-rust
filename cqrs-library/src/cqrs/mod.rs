@@ -3,6 +3,7 @@ pub mod command;
 pub mod traits;
 
 pub mod messages;
+mod operations;
 
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -23,6 +24,7 @@ use crate::cqrs::command::{CommandAccessor, CommandStore};
 use crate::cqrs::traits::{Event, EventProducer, InboundChannel, OutboundChannel};
 use cqrs_messages::cqrs::messages::{CommandEnvelopeProto, CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 use crate::cqrs::messages::CommandResponse;
+use crate::cqrs::operations::serialize_event_to_protobuf;
 
 pub struct EventProducerImpl {
     service_id: String,
@@ -45,29 +47,10 @@ impl<'e> EventProducerImpl {
 
     fn convert_event(&mut self, event: &dyn Event) -> Vec<u8> {
         let event_id = Uuid::new_v4().to_string();
-        let event_serialized = serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str());
-        event_serialized.0
+        serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str())
     }
-
 }
 
-fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> (Vec<u8>, String) {
-    let serialized_event = serde_json::to_vec(&event).unwrap();
-    let event_id = String::from(event_id);
-    let event_envelope = DomainEventEnvelopeProto {
-        id: event_id.to_owned(),
-        timestamp: Utc::now().timestamp(),
-        transaction_id: Uuid::new_v4().to_string(),
-        r#type: event.get_type().to_owned(),
-        version: event.get_version().to_owned(),
-        stream_info: None,
-        event: serialized_event,
-        partition_key: event.get_id(),
-        producing_service_id: service_id.to_owned(),
-        producing_service_version: "1".to_owned(),
-    };
-    (serialize_protobuf(&event_envelope), event_id)
-}
 
 
 pub struct CommandServiceClient<T> {
@@ -93,41 +76,25 @@ impl EventListener {
     }
 
     pub fn register_handler(&mut self, event_type: &str, handler: EventHandlerFn) {
-        let handlers = self.handlers.get(event_type);
-        match handlers {
-            None => {
-                self.handlers.insert(String::from(event_type), Vec::new());
-            }
-            _ => {}
-        }
-        let vec = self.handlers.get_mut(event_type).unwrap();
-        vec.push(handler);
+        self.handlers
+            .entry(String::from(event_type))
+            .or_insert(Vec::new())
+            .push(handler);
     }
 
     pub fn consume(&self, event_message: &[u8]) {
-        let result = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
-        let result1 = serde_json::from_slice(result.event.as_slice());
-        match result1 {
+        let proto_message = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let json_message = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice());
+        match json_message {
             Ok(event) => {
-                self.match_handlers(result.r#type, event);
+                if let Some(handlers) = self.handlers.get(proto_message.r#type.as_str()) {
+                    for handler in handlers {
+                        handler(event.deref());
+                    }
+                }
             }
             Err(err) => {
                 error!("Error deserializing event {}", err);
-            }
-        }
-    }
-
-    fn match_handlers(&self, result: String, event: Box<dyn Event>) {
-        let handlers = self.handlers.get(result.as_str());
-        match handlers {
-            None => {
-                error!("No event handlers found for event type {} and version {}",
-                    event.get_type(), event.get_version());
-            }
-            Some(handlers) => {
-                for handler in handlers {
-                    handler(event.deref());
-                }
             }
         }
     }
@@ -161,7 +128,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
                     let response = CommandServiceClient::read_response(&mut channel);
                     match response {
                         None => {
-                            info!("No result");
+                            debug!("No result");
                         }
                         Some(command_response) => {
                             let mut waiting_callers = pending_responses_senders.lock().await;
