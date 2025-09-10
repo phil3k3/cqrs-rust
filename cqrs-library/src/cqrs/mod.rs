@@ -23,12 +23,12 @@ use cqrs_messages::cqrs::messages::{CommandResponseEnvelopeProto, DomainEventEnv
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
 use crate::cqrs::operations::{handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf};
 
-pub struct EventProducerImpl {
+pub struct CqrsEventProducer {
     service_id: String,
     event_channel: Box<dyn OutboundChannel + Send>
 }
 
-impl EventProducer for EventProducerImpl {
+impl EventProducer for CqrsEventProducer {
 
     fn produce(&mut self, event: &dyn Event) {
         let event_message = self.convert_event(event);
@@ -36,10 +36,10 @@ impl EventProducer for EventProducerImpl {
     }
 }
 
-impl<'e> EventProducerImpl {
+impl<'e> CqrsEventProducer {
 
-    pub fn new(service_id: &str, event_channel: Box<dyn OutboundChannel + Send>) -> EventProducerImpl {
-        EventProducerImpl { service_id: String::from(service_id), event_channel }
+    pub fn new(service_id: &str, event_channel: Box<dyn OutboundChannel + Send>) -> CqrsEventProducer {
+        CqrsEventProducer { service_id: String::from(service_id), event_channel }
     }
 
     fn convert_event(&mut self, event: &dyn Event) -> Vec<u8> {
@@ -210,12 +210,12 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
 
 pub struct CommandServiceServer<'c> {
     command_store: &'c CommandStore,
-    event_producer: &'c mut EventProducerImpl
+    event_producer: &'c mut CqrsEventProducer
 }
 
 impl<'a> CommandServiceServer<'a> {
 
-    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut EventProducerImpl) -> Box<CommandServiceServer<'a>> {
+    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut CqrsEventProducer) -> Box<CommandServiceServer<'a>> {
         Box::new(CommandServiceServer { command_store, event_producer })
     }
 
@@ -261,10 +261,9 @@ mod tests {
     use config::Config;
     use serde::{Serialize, Deserialize};
 
-    use log::debug;
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
-    use crate::cqrs::{CommandServiceClient, CommandServiceServer, Event, EventProducerImpl};
+    use crate::cqrs::{CommandServiceClient, CommandServiceServer, Event, CqrsEventProducer};
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
     use crate::cqrs::traits::{Command, EventProducer, InboundChannel, OutboundChannel};
@@ -299,10 +298,6 @@ mod tests {
         fn get_type(&self) -> String {
             String::from("UserCreatedEvent")
         }
-    }
-
-    struct CapturingChannel {
-        messages: Vec<Vec<u8>>
     }
 
 
@@ -341,14 +336,6 @@ mod tests {
             } else  {
                 None
             }
-        }
-    }
-
-
-    impl InboundChannel for CapturingChannel {
-        fn consume(&mut self) -> Option<Vec<u8>> {
-            debug!("Removing message");
-            self.messages.pop()
         }
     }
 
@@ -420,7 +407,7 @@ mod tests {
             let mut command_store = CommandStore::new("COMMAND-SERVER");
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(event_sender)));
+            let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(event_sender)));
             let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
 
             match command_receiver.await {

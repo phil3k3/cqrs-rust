@@ -4,7 +4,7 @@ use prost::Message;
 use uuid::Uuid;
 use cqrs_messages::cqrs::messages::{CommandEnvelopeProto, CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 use crate::cqrs::command::{CommandAccessor, CommandStore};
-use crate::cqrs::{EventProducerImpl};
+use crate::cqrs::{CqrsEventProducer};
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
 use crate::cqrs::traits::{Command, Event};
 
@@ -26,7 +26,7 @@ pub fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id
     serialize_protobuf(&event_envelope)
 }
 
-pub fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut EventProducerImpl) -> Option<Vec<u8>> {
+pub fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut CqrsEventProducer) -> Option<Vec<u8>> {
     let result = CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);

@@ -10,6 +10,7 @@ cqrs-library = { path = "../cqrs-library" }
 rdkafka = { version = "0.38.0", features = ["cmake-build"] }
 log = "0.4.8"
 futures = "0.3.28"
+thiserror = { workspace = true }
 
 [dev-dependencies]
 testcontainers = "0.15.0"
