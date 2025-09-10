@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 pub struct CommandMetadata {
@@ -10,6 +11,13 @@ pub struct CommandServerResult {
     pub(crate) command_response: CommandResponse,
     pub(crate) service_id: String,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CommandResponseResult {
+    pub(crate) entity_id: String,
+    pub(crate) result: String,
+}
+
 
 #[derive(PartialEq, Debug)]
 pub enum CommandResponse {

@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+cqrs-messages = { path = "../cqrs-messages" }
 prost = "0.12.3"
 bytes = "1.1.0"
 prost-types = "0.12.3"
@@ -20,6 +21,7 @@ typetag = "0.2"
 tokio = { version = "1.35.0", features = ["macros", "rt-multi-thread", "time", "sync"] }
 config = "0.13.4"
 env_logger = "0.10.1"
+thiserror = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.12.3"

@@ -1,10 +1,13 @@
 use std::env;
-use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, Event, EventProducer, EventProducerImpl};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Serialize, Deserialize};
-use log::{debug, info};
+use log::{debug, error, info};
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
+use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
+use cqrs_library::cqrs::{CommandServiceServer, CqrsEventProducer};
+use cqrs_library::cqrs::messages::CommandResponse;
+use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
 
 fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();
@@ -39,11 +42,11 @@ struct UserCreatedEvent {
 #[typetag::serde]
 impl Event for UserCreatedEvent {
     fn get_id(&self) -> String {
-        return self.user_id.to_owned();
+        self.user_id.to_owned()
     }
 
     fn get_type(&self) -> String {
-        return String::from("UserCreatedEvent");
+        String::from("UserCreatedEvent")
     }
 }
 
@@ -70,6 +73,7 @@ async fn main() {
     info!("Creating topics");
     command_response_channel.create_topic(&settings.get_string("command_topic").unwrap()).await;
     command_response_channel.create_topic(&settings.get_string("response_topic").unwrap()).await;
+    command_response_channel.create_topic(&settings.get_string("events_topic").unwrap()).await;
 
 
     tokio::task::spawn_blocking(move || {
@@ -82,13 +86,13 @@ async fn main() {
                 "COMMAND-SERVER",
                 &[&settings.get_string("command_topic").unwrap()],
                 &settings.get_string("bootstrap_server").unwrap(),
-            );
+            ).expect("Failed to create command channel");
 
             let event_channel = KafkaOutboundChannel::new(
                 &settings.get_string("events_topic").unwrap(),
                 &settings.get_string("bootstrap_server").unwrap());
 
-            let mut event_producer = EventProducerImpl::new("COMMAND-SERVER", Box::new(event_channel));
+            let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(event_channel));
 
             let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
 
@@ -96,10 +100,10 @@ async fn main() {
                 debug!("Waiting for message");
                 let message = command_channel.async_consume().await;
                 match message {
-                    None => {
-                        debug!("No message!");
+                    Err(x) => {
+                        error!("Error reading message {}", x);
                     }
-                    Some(mut message) => {
+                    Ok(mut message) => {
                         command_service_server.handle_message(&mut message, &mut command_response_channel);
                     }
                 }

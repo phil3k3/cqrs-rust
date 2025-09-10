@@ -5,7 +5,7 @@ use rdkafka::{ClientConfig, ClientContext, Message};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::error::KafkaError;
 use rdkafka::producer::{BaseRecord, DeliveryResult, Producer, ProducerContext, ThreadedProducer};
-use cqrs_library::OutboundChannel;
+use cqrs_library::cqrs::traits::OutboundChannel;
 
 pub struct KafkaOutboundChannel {
     topic: String,

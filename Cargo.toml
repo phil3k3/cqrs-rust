@@ -3,5 +3,9 @@ members = [
     "cqrs-library",
     "cqrs-kafka",
     "cqrs-example-client",
-    "cqrs-example-server"
+    "cqrs-example-server",
+    "cqrs-messages"
 ]
+
+[workspace.dependencies]
+thiserror = "2.0.16"

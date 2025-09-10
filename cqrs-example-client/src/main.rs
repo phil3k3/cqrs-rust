@@ -1,19 +1,22 @@
 use std::{env, io};
 use std::sync::{Arc, Mutex};
 use config::Config;
-use cqrs_library::{CommandServiceClient, Command, EventListener, Event, CommandResponse};
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Deserialize, Serialize};
 use actix_web::{App, HttpResponse, HttpServer, post, Responder, web};
 use log::info;
 use uuid::Uuid;
+use cqrs_library::cqrs::{CommandServiceClient, EventListener};
+use cqrs_library::cqrs::messages::CommandResponse;
+use cqrs_library::cqrs::traits::{Command, Event};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
     user_id: String,
     name: String,
 }
+
 
 struct AppState {
     client: Mutex<CommandServiceClient<KafkaInboundChannel>>,
@@ -37,11 +40,11 @@ struct UserCreatedEvent {
 #[typetag::serde]
 impl Event for UserCreatedEvent {
     fn get_id(&self) -> String {
-        return self.user_id.to_owned();
+        self.user_id.to_owned()
     }
 
     fn get_type(&self) -> String {
-        return String::from("UserCreatedEvent");
+        String::from("UserCreatedEvent")
     }
 }
 
@@ -49,29 +52,51 @@ fn handle_event(event: &dyn Event) {
     info!("{:?}", event);
 }
 
-#[post("/users/{user_id}")]
+#[derive(Deserialize)]
+struct UserPayload {
+    name: String
+}
+
+#[post("/users")]
 async fn post_user(
     command_service_client: web::Data<AppState>,
-    user_id: web::Path<String>) -> impl Responder {
-    info!("Creating user {}", user_id);
+    payload: web::Json<UserPayload>
+) -> impl Responder {
     let command = CreateUserCommand {
         user_id: Uuid::new_v4().to_string(),
-        name: String::from(user_id.into_inner()),
+        name: payload.name.clone(),
     };
-    let result = command_service_client.client.lock().unwrap().send_command(&command).await;
-    if result == CommandResponse::Ok {
-        HttpResponse::Ok().body(command.user_id)
-    } else {
-        HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+    dbg!(&command);
+    info!("Creating user {}", command.name);
+
+    match command_service_client.client.lock() {
+        Ok(mut lock_result) => {
+            let result = lock_result.send_command(&command).await;
+            match result {
+                Ok(result) => {
+                    if result == CommandResponse::Ok {
+                        HttpResponse::Ok().body(command.user_id)
+                    } else {
+                        HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+                    }
+                }
+                Err(_) => {
+                    HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+                }
+            }
+        }
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+        }
     }
 }
 
 fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
-    return Box::new(KafkaInboundChannel::new(
+    Box::new(KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-    ));
+    ))
 }
 
 #[tokio::main]
@@ -99,7 +124,7 @@ async fn main() -> io::Result<()> {
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
-        );
+        ).expect("Could not create kafka event listener channel");
 
         kafka_event_listener_channel.consume_async_blocking(&event_listener).await;
     });
@@ -126,7 +151,14 @@ async fn main() -> io::Result<()> {
                 )
             }
         );
-        command_service_client_data.client.lock().unwrap().start(settings_inner);
+        match command_service_client_data.client.lock() {
+            Ok(mut guard) => {
+                guard.start(settings_inner);
+            }
+            Err(_) => {
+                panic!("Could not lock mutex");
+            }
+        }
         App::new()
             .app_data(command_service_client_data.clone())
             .service(post_user)

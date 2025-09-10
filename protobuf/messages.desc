@@ -1,6 +1,6 @@
 
-£	
-messages.protocqrs"˜
+µ	
+ cqrs-messages/src/messages.protocqrs"˜
 CommandEnvelopeProto
 id (	Rid
 	timestamp (R	timestamp
