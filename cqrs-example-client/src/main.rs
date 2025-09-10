@@ -97,6 +97,7 @@ async fn main() -> io::Result<()> {
 
         let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
+        dbg!(&topics);
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),

@@ -13,11 +13,11 @@ struct CustomContext;
 impl ClientContext for CustomContext {}
 
 impl ConsumerContext for CustomContext {
-    fn pre_rebalance(&self, rebalance: &Rebalance) {
+    fn pre_rebalance(&self, base_consumer: &BaseConsumer<Self>, rebalance: &Rebalance) {
         info!("Pre rebalance {:?}", rebalance);
     }
 
-    fn post_rebalance(&self, rebalance: &Rebalance) {
+    fn post_rebalance(&self, base_consumer: &BaseConsumer<Self>, rebalance: &Rebalance) {
         info!("Post rebalance {:?}", rebalance);
     }
 
@@ -95,7 +95,7 @@ impl StreamKafkaInboundChannel {
     }
 
     pub async fn consume_async_blocking(&self, event_listener: &EventListener) {
-        return self.consumer.stream().try_for_each(|borrowed_message| {
+        self.consumer.stream().try_for_each(|borrowed_message| {
             async move {
                 event_listener.consume(borrowed_message.payload().unwrap());
                 let key = String::from_utf8_lossy(borrowed_message.key().unwrap());
@@ -103,7 +103,7 @@ impl StreamKafkaInboundChannel {
                          key, borrowed_message.topic(), borrowed_message.partition(), borrowed_message.offset());
                 Ok(())
             }
-        }).await.expect("Stream processing failed");
+        }).await.expect("Stream processing failed")
     }
 }
 

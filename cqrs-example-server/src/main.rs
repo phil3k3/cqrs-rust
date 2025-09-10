@@ -73,6 +73,7 @@ async fn main() {
     info!("Creating topics");
     command_response_channel.create_topic(&settings.get_string("command_topic").unwrap()).await;
     command_response_channel.create_topic(&settings.get_string("response_topic").unwrap()).await;
+    command_response_channel.create_topic(&settings.get_string("events_topic").unwrap()).await;
 
 
     tokio::task::spawn_blocking(move || {

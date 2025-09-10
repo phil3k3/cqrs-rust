@@ -7,9 +7,8 @@ edition = "2021"
 
 [dependencies]
 cqrs-library = { path = "../cqrs-library" }
-rdkafka = { version = "0.35.0", features = ["cmake-build"] }
+rdkafka = { version = "0.38.0", features = ["cmake-build"] }
 log = "0.4.8"
-blockingqueue = "0.1.1"
 futures = "0.3.28"
 
 [dev-dependencies]
