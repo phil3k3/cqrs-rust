@@ -5,9 +5,9 @@ use log::{debug, info};
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
-use cqrs_library::cqrs::{Command, CommandServiceServer, EventProducerImpl};
+use cqrs_library::cqrs::{CommandServiceServer, EventProducerImpl};
 use cqrs_library::cqrs::messages::CommandResponse;
-use cqrs_library::cqrs::traits::{Event, EventProducer};
+use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
 
 fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();

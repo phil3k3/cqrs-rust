@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub struct CommandMetadata {
@@ -12,10 +13,12 @@ pub struct CommandServerResult {
     pub(crate) service_id: String,
 }
 
-pub struct CarrierEvent {
-    pub payload: Vec<u8>,
-    pub event_id: Uuid
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CommandResponseResult {
+    pub(crate) entity_id: String,
+    pub(crate) result: String,
 }
+
 
 #[derive(PartialEq, Debug)]
 pub enum CommandResponse {

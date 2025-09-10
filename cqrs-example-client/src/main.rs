@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use actix_web::{App, HttpResponse, HttpServer, post, Responder, web};
 use log::info;
 use uuid::Uuid;
-use cqrs_library::cqrs::{Command, CommandServiceClient, EventListener};
+use cqrs_library::cqrs::{CommandServiceClient, EventListener};
 use cqrs_library::cqrs::messages::CommandResponse;
-use cqrs_library::cqrs::traits::Event;
+use cqrs_library::cqrs::traits::{Command, Event};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
