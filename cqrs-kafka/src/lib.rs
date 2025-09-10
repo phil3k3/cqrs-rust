@@ -9,7 +9,7 @@ mod tests {
     use log::info;
     use testcontainers::clients;
     use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
-    use cqrs_library::{InboundChannel, OutboundChannel};
+    use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
     use crate::inbound::KafkaInboundChannel;
     use crate::outbound::KafkaOutboundChannel;
 

@@ -5,7 +5,8 @@ use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult};
-use cqrs_library::{EventListener, InboundChannel};
+use cqrs_library::cqrs::EventListener;
+use cqrs_library::cqrs::traits::InboundChannel;
 
 struct CustomContext;
 

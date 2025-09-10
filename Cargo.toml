@@ -3,5 +3,6 @@ members = [
     "cqrs-library",
     "cqrs-kafka",
     "cqrs-example-client",
-    "cqrs-example-server"
+    "cqrs-example-server",
+    "cqrs-messages"
 ]

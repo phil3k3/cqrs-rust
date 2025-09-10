@@ -1,10 +1,13 @@
 use std::env;
-use cqrs_library::{Command, CommandAccessor, CommandResponse, CommandServiceServer, CommandStore, Event, EventProducer, EventProducerImpl};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Serialize, Deserialize};
 use log::{debug, info};
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
+use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
+use cqrs_library::cqrs::{Command, CommandServiceServer, EventProducerImpl};
+use cqrs_library::cqrs::messages::CommandResponse;
+use cqrs_library::cqrs::traits::{Event, EventProducer};
 
 fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();

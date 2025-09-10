@@ -1,13 +1,15 @@
 use std::{env, io};
 use std::sync::{Arc, Mutex};
 use config::Config;
-use cqrs_library::{CommandServiceClient, Command, EventListener, Event, CommandResponse};
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use serde::{Deserialize, Serialize};
 use actix_web::{App, HttpResponse, HttpServer, post, Responder, web};
 use log::info;
 use uuid::Uuid;
+use cqrs_library::cqrs::{Command, CommandServiceClient, EventListener};
+use cqrs_library::cqrs::messages::CommandResponse;
+use cqrs_library::cqrs::traits::Event;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
