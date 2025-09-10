@@ -219,24 +219,6 @@ impl<'a> CommandServiceServer<'a> {
         Box::new(CommandServiceServer { command_store, event_producer })
     }
 
-    pub fn consume(&mut self, command_channel: &mut dyn InboundChannel, command_response_channel: &mut dyn OutboundChannel) {
-        let message = command_channel.consume();
-        match message {
-            None => debug!("No message"),
-            Some(message) => {
-                let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
-                match command_response {
-                    None => {
-                        error!("No command response")
-                    }
-                    Some(command_response) => {
-                        command_response_channel.send("".as_bytes().to_vec(), command_response)
-                    }
-                }
-            }
-        }
-    }
-
     pub fn handle_message(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
         let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
         match command_response {
