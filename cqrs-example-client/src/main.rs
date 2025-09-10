@@ -1,4 +1,5 @@
 use std::{env, io};
+use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 use config::Config;
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
@@ -16,6 +17,7 @@ struct CreateUserCommand {
     user_id: String,
     name: String,
 }
+
 
 struct AppState {
     client: Mutex<CommandServiceClient<KafkaInboundChannel>>,
@@ -51,15 +53,23 @@ fn handle_event(event: &dyn Event) {
     info!("{:?}", event);
 }
 
-#[post("/users/{user_id}")]
+#[derive(Deserialize)]
+struct UserPayload {
+    name: String
+}
+
+#[post("/users")]
 async fn post_user(
     command_service_client: web::Data<AppState>,
-    user_id: web::Path<String>) -> impl Responder {
-    info!("Creating user {}", user_id);
+    payload: web::Json<UserPayload>
+) -> impl Responder {
     let command = CreateUserCommand {
         user_id: Uuid::new_v4().to_string(),
-        name: String::from(user_id.into_inner()),
+        name: payload.name.clone(),
     };
+    dbg!(&command);
+    info!("Creating user {}", command.name);
+
     let result = command_service_client.client.lock().unwrap().send_command(&command).await;
     if result == CommandResponse::Ok {
         HttpResponse::Ok().body(command.user_id)

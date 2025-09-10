@@ -143,7 +143,6 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
             service_instance_id: 0u32,
             command_channel,
             pending_responses_senders: Arc::new(Mutex::new(HashMap::new())),
-            // running: Arc::new(Mutex::new(false)),
             channel_builder
         }
     }
@@ -164,12 +163,14 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
                         None => {
                             info!("No result");
                         }
-                        Some(result) => {
-                            let mut result1 = pending_responses_senders.lock().await;
+                        Some(command_response) => {
+                            let mut waiting_callers = pending_responses_senders.lock().await;
                             {
-                                if let Some(sender) = result1.remove(result.1.as_str()) {
-                                    debug!("Received response for {}: {}", result.1.as_str(), result.0);
-                                    sender.send(result.0).expect("Command could not be delivered");
+                                dbg!(&waiting_callers);
+                                dbg!(&command_response);
+                                if let Some(waiting_caller) = waiting_callers.remove(command_response.1.as_str()) {
+                                    debug!("Received response for {}: {}", command_response.1.as_str(), command_response.0);
+                                    waiting_caller.send(command_response.0).expect("Command could not be delivered");
                                 } else {
                                     error!("Sender not found");
                                 }
@@ -188,8 +189,9 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         let (tx, rx) = channel();
 
         {
-            let mut result1 = self.pending_responses_senders.lock().await;
-            result1.insert(command_id.to_owned(), tx);
+            let mut waiting_callers = self.pending_responses_senders.lock().await;
+            waiting_callers.insert(command_id.to_owned(), tx);
+            dbg!(&waiting_callers);
         }
 
         self.command_channel.send(command.get_subject().as_bytes().to_vec(),serialized_command);
