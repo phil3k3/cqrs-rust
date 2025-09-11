@@ -1,23 +1,22 @@
+mod error;
 pub mod inbound;
+mod operations;
 pub mod outbound;
 mod prelude;
-mod error;
-mod operations;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::channel;
-    use std::{thread};
-    use log::info;
-    use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
-    use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
     use crate::inbound::KafkaInboundChannel;
     use crate::outbound::KafkaOutboundChannel;
+    use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
+    use log::info;
+    use std::sync::mpsc::channel;
+    use std::thread;
+    use testcontainers::runners::AsyncRunner;
+    use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
 
     #[tokio::test]
     async fn test_sync_send_receive() {
-
         env_logger::init();
 
         info!("Starting transmission test via Kafka");
@@ -27,17 +26,15 @@ mod tests {
 
         info!("Started Kafka container at port {}", host_port);
 
-        let bootstrap_servers = format!(
-            "127.0.0.1:{}",
-            host_port
-        );
+        let bootstrap_servers = format!("127.0.0.1:{}", host_port);
 
         info!("{}", bootstrap_servers);
         let mut outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers);
 
         outbound_channel.create_topic("TEST").await;
 
-        let mut inbound_channel = KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers);
+        let mut inbound_channel =
+            KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers);
 
         inbound_channel.consume();
 
@@ -49,19 +46,17 @@ mod tests {
         sender.join().expect("The sender thread has panicked");
         info!("Message sent");
 
-        let receiver = thread::spawn(move || {
-            loop {
-                info!("Waiting for message");
-                let message = inbound_channel.consume();
-                match message {
-                    Some(content) => {
-                        let string = String::from_utf8(content).unwrap();
-                        info!("Received message {}", &string);
-                        assert_eq!("MESSAGE", string);
-                        break;
-                    }
-                    _ => {}
+        let receiver = thread::spawn(move || loop {
+            info!("Waiting for message");
+            let message = inbound_channel.consume();
+            match message {
+                Some(content) => {
+                    let string = String::from_utf8(content).unwrap();
+                    info!("Received message {}", &string);
+                    assert_eq!("MESSAGE", string);
+                    break;
                 }
+                _ => {}
             }
         });
 
@@ -71,7 +66,6 @@ mod tests {
 
     #[test]
     fn test_channel() {
-
         info!("Starting test via Kafka");
 
         let (tx, rx) = channel();

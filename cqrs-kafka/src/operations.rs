@@ -1,9 +1,9 @@
+use crate::prelude::*;
 use log::info;
-use rdkafka::{ClientConfig, ClientContext, TopicPartitionList};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, ConsumerContext, Rebalance, StreamConsumer};
 use rdkafka::error::KafkaResult;
-use crate::prelude::*;
+use rdkafka::{ClientConfig, ClientContext, TopicPartitionList};
 
 pub struct CustomContext;
 
@@ -24,7 +24,10 @@ impl ConsumerContext for CustomContext {
 
 type LoggingStreamingConsumer = StreamConsumer<CustomContext>;
 
-pub fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingStreamingConsumer> {
+pub fn create_consumer(
+    bootstrap_server: String,
+    service_id: String,
+) -> Result<LoggingStreamingConsumer> {
     let mut config = ClientConfig::new();
     config
         .set("group.id", format!("{}-consumer", &service_id))
@@ -37,5 +40,7 @@ pub fn create_consumer(bootstrap_server: String, service_id: String) -> Result<L
 
     // all nodes of the same service are in a group and will get some partitions assigned
     config.set_log_level(RDKafkaLogLevel::Debug);
-    config.create_with_context(CustomContext {}).map_err(|x| x.into())
+    config
+        .create_with_context(CustomContext {})
+        .map_err(|x| x.into())
 }

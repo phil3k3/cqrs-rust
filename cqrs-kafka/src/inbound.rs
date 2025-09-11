@@ -10,22 +10,28 @@ use std::time::Duration;
 
 type LoggingConsumer = BaseConsumer<CustomContext>;
 
-
 pub struct KafkaInboundChannel {
     consumer: BaseConsumer<CustomContext>,
 }
 
 pub struct StreamKafkaInboundChannel<T: MessageConsumer> {
     consumer: StreamConsumer<CustomContext>,
-    message_consumer: Arc<T>
+    message_consumer: Arc<T>,
 }
 
 impl KafkaInboundChannel {
     pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> KafkaInboundChannel {
         let channel = KafkaInboundChannel {
-            consumer: KafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string()).unwrap()
+            consumer: KafkaInboundChannel::create_consumer(
+                bootstrap_server.to_string(),
+                service_id.to_string(),
+            )
+            .unwrap(),
         };
-        channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
+        channel
+            .consumer
+            .subscribe(&topics.to_vec())
+            .expect("Could not subscribe");
         channel
     }
     fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingConsumer> {
@@ -41,31 +47,33 @@ impl KafkaInboundChannel {
 
         // all nodes of the same service are in a group and will get some partitions assigned
         config.set_log_level(RDKafkaLogLevel::Debug);
-        config.create_with_context(CustomContext {}).map_err(|x| x.into())
+        config
+            .create_with_context(CustomContext {})
+            .map_err(|x| x.into())
     }
 }
 
 impl InboundChannel for KafkaInboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>> {
-        self.consumer.poll(Duration::from_secs(1))
-            .and_then(|x| {
-                match x {
-                    Ok(t) => {
-                        let option = t.payload();
-                        option.and_then(|y| {
-                            Some(y.to_vec())
-                        })
-                    },
-                    Err(_v) => None
+        self.consumer
+            .poll(Duration::from_secs(1))
+            .and_then(|x| match x {
+                Ok(t) => {
+                    let option = t.payload();
+                    option.and_then(|y| Some(y.to_vec()))
                 }
-            }
-            )
+                Err(_v) => None,
+            })
     }
 }
 
-
 impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str, message_consumer: T) -> Result<StreamKafkaInboundChannel<T>> {
+    pub fn new(
+        service_id: &str,
+        topics: &[&str],
+        bootstrap_server: &str,
+        message_consumer: T,
+    ) -> Result<StreamKafkaInboundChannel<T>> {
         let result = create_consumer(bootstrap_server.to_string(), service_id.to_string())?;
         let channel = StreamKafkaInboundChannel {
             consumer: result,
@@ -77,15 +85,18 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
 
     pub async fn consume_async_blocking(&self) {
         let consumer = self.message_consumer.clone();
-        self.consumer.stream().try_for_each(|borrowed_message| {
-            let consumer = consumer.clone();
-            async move {
-                if let Some(message) = borrowed_message.payload() {
-                    consumer.consume(message);
+        self.consumer
+            .stream()
+            .try_for_each(|borrowed_message| {
+                let consumer = consumer.clone();
+                async move {
+                    if let Some(message) = borrowed_message.payload() {
+                        consumer.consume(message);
+                    }
+                    Ok(())
                 }
-                Ok(())
-            }
-        }).await.expect("Stream processing failed")
+            })
+            .await
+            .expect("Stream processing failed")
     }
 }
-
