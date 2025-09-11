@@ -1,8 +1,8 @@
-use std::fmt::Debug;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[typetag::serde(tag = "type")]
-pub trait Event : Debug {
+pub trait Event: Debug {
     fn get_id(&self) -> String;
 
     fn get_type(&self) -> String;
@@ -13,18 +13,22 @@ pub trait Event : Debug {
 }
 
 pub trait EventProducer {
-    fn produce(&mut self, event: &dyn Event) ;
+    fn produce(&self, event: &dyn Event);
 }
 
-pub trait OutboundChannel {
-    fn send(&mut self, key: Vec<u8>, message: Vec<u8>);
+pub trait OutboundChannel: Send + Sync {
+    fn send(&self, key: Vec<u8>, message: Vec<u8>);
 }
 
 pub trait InboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>>;
 }
 
-pub trait Command<'de> : Deserialize<'de> + Serialize {
+pub trait MessageConsumer {
+    fn consume(&self, message: &[u8]);
+}
+
+pub trait Command<'de>: Deserialize<'de> + Serialize {
     fn get_subject(&self) -> String;
     fn get_type(&self) -> String;
     fn get_version(&self) -> i32 {

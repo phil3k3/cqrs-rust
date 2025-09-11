@@ -1,19 +1,25 @@
-use std::env;
-use cqrs_kafka::outbound::KafkaOutboundChannel;
-use serde::{Serialize, Deserialize};
-use log::{debug, error, info};
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
+use cqrs_kafka::outbound::KafkaOutboundChannel;
 use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
-use cqrs_library::cqrs::{CommandServiceServer, CqrsEventProducer};
 use cqrs_library::cqrs::messages::CommandResponse;
 use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
+use cqrs_library::cqrs::{CommandServiceServer, CqrsEventProducer};
+use log::{debug, error, info};
+use serde::{Deserialize, Serialize};
+use std::env;
 
-fn handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
+fn handle_create_user(
+    command_accessor: &mut CommandAccessor,
+    event_producer: &dyn EventProducer,
+) -> CommandResponse {
     let command: Box<TestCreateUserCommand> = command_accessor.get_command();
 
     info!("Creating user {} with id {}", command.name, command.user_id);
-    let event = UserCreatedEvent { user_id: command.user_id, name: command.name };
+    let event = UserCreatedEvent {
+        user_id: command.user_id,
+        name: command.name,
+    };
     event_producer.produce(&event);
     CommandResponse::Ok
 }
@@ -36,7 +42,7 @@ impl Command<'_> for TestCreateUserCommand {
 #[derive(Debug, Deserialize, Serialize)]
 struct UserCreatedEvent {
     user_id: String,
-    name: String
+    name: String,
 }
 
 #[typetag::serde]
@@ -65,49 +71,45 @@ async fn main() {
 
     env_logger::init();
 
-    let mut command_response_channel = KafkaOutboundChannel::new(
+    let command_response_channel = KafkaOutboundChannel::new(
         &settings.get_string("response_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap(),
     );
 
     info!("Creating topics");
-    command_response_channel.create_topic(&settings.get_string("command_topic").unwrap()).await;
-    command_response_channel.create_topic(&settings.get_string("response_topic").unwrap()).await;
-    command_response_channel.create_topic(&settings.get_string("events_topic").unwrap()).await;
+    command_response_channel
+        .create_topic(&settings.get_string("command_topic").unwrap())
+        .await;
+    command_response_channel
+        .create_topic(&settings.get_string("response_topic").unwrap())
+        .await;
+    command_response_channel
+        .create_topic(&settings.get_string("events_topic").unwrap())
+        .await;
 
+    let mut command_store = CommandStore::new("COMMAND-SERVER");
+    command_store.register_handler("CreateUserCommand", handle_create_user);
 
-    tokio::task::spawn_blocking(move || {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async move {
-            let mut command_store = CommandStore::new("COMMAND-SERVER");
-            command_store.register_handler("CreateUserCommand", handle_create_user);
+    let event_channel = KafkaOutboundChannel::new(
+        &settings.get_string("events_topic").unwrap(),
+        &settings.get_string("bootstrap_server").unwrap(),
+    );
 
-            let mut command_channel = StreamKafkaInboundChannel::new(
-                "COMMAND-SERVER",
-                &[&settings.get_string("command_topic").unwrap()],
-                &settings.get_string("bootstrap_server").unwrap(),
-            ).expect("Failed to create command channel");
+    let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(event_channel));
 
-            let event_channel = KafkaOutboundChannel::new(
-                &settings.get_string("events_topic").unwrap(),
-                &settings.get_string("bootstrap_server").unwrap());
+    let command_service_server = CommandServiceServer::new(
+        &command_store,
+        &mut event_producer,
+        &command_response_channel,
+    );
 
-            let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(event_channel));
+    let command_channel = StreamKafkaInboundChannel::new(
+        "COMMAND-SERVER",
+        &[&settings.get_string("command_topic").unwrap()],
+        &settings.get_string("bootstrap_server").unwrap(),
+        command_service_server,
+    )
+    .expect("Failed to create command channel");
 
-            let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
-
-            loop {
-                debug!("Waiting for message");
-                let message = command_channel.async_consume().await;
-                match message {
-                    Err(x) => {
-                        error!("Error reading message {}", x);
-                    }
-                    Ok(mut message) => {
-                        command_service_server.handle_message(&mut message, &mut command_response_channel);
-                    }
-                }
-            }
-        })
-    }).await.unwrap();
+    command_channel.consume_async_blocking().await;
 }

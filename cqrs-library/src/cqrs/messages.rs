@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 pub struct CommandMetadata {
     pub(crate) subject: String,
     pub(crate) command_type: String,
-    pub(crate) version: i32
+    pub(crate) version: i32,
 }
 
 pub struct CommandServerResult {
@@ -17,7 +17,6 @@ pub struct CommandResponseResult {
     pub(crate) entity_id: String,
     pub(crate) result: String,
 }
-
 
 #[derive(PartialEq, Debug)]
 pub enum CommandResponse {

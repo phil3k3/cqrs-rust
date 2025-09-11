@@ -7,22 +7,15 @@ edition = "2021"
 
 [dependencies]
 cqrs-messages = { path = "../cqrs-messages" }
-prost = "0.12.3"
-bytes = "1.1.0"
-prost-types = "0.12.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1.6.1", features = ["serde", "v4"] }
-chrono = "0.4"
-lazy_static = "1.4.0"
-dashmap = "5.3.3"
-log = "0.4.17"
-typetag = "0.2"
-tokio = { version = "1.35.0", features = ["macros", "rt-multi-thread", "time", "sync"] }
-config = "0.13.4"
-env_logger = "0.10.1"
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+typetag = { workspace = true }
+tokio = { workspace = true }
+config = { workspace = true }
+env_logger ={ workspace = true }
 thiserror = { workspace = true }
-
-[build-dependencies]
-prost-build = "0.12.3"
 
