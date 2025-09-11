@@ -71,17 +71,8 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
             consumer: result,
             message_consumer: Arc::new(message_consumer),
         };
-        channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
+        channel.consumer.subscribe(&topics.to_vec())?;
         Ok(channel)
-    }
-
-    pub async fn async_consume(&mut self) -> Result<Vec<u8>> {
-        loop {
-            let msg = self.consumer.recv().await?;
-            if let Some(payload) = msg.payload() {
-                return Ok(payload.to_vec());
-            }
-        }
     }
 
     pub async fn consume_async_blocking(&self) {

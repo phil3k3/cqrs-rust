@@ -120,6 +120,8 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         let channel_reader = self.channel_builder.clone();
 
         tokio::task::spawn(async move {
+            dbg!("RECEIVE");
+            dbg!(Arc::as_ptr(&pending_responses_senders));
             let mut guard = channel_reader.lock().await;
             if let Some(func) = guard.take() {
                 let mut channel = func(settings);
@@ -132,6 +134,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
                         Some(command_response) => {
                             let mut waiting_callers = pending_responses_senders.lock().await;
                             {
+                                dbg!("map addr (remove) =", (&*waiting_callers as *const _));
                                 dbg!(&waiting_callers);
                                 dbg!(&command_response);
                                 if let Some(waiting_caller) = waiting_callers.remove(command_response.1.as_str()) {
@@ -157,6 +160,8 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         {
             let mut waiting_callers = self.pending_responses_senders.lock().await;
             waiting_callers.insert(command_id.to_owned(), tx);
+            dbg!("map addr (insert) =", &*waiting_callers as *const _);
+            dbg!(Arc::as_ptr(&self.pending_responses_senders));
             dbg!(&waiting_callers);
         }
 
@@ -244,7 +249,7 @@ mod tests {
     use crate::cqrs::{CommandServiceClient, CommandServiceServer, Event, CqrsEventProducer};
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
-    use crate::cqrs::traits::{Command, EventProducer, InboundChannel, OutboundChannel};
+    use crate::cqrs::traits::{Command, EventProducer, InboundChannel, MessageConsumer, OutboundChannel};
 
     #[derive(Debug, Deserialize, Serialize)]
     struct TestCreateUserCommand {
@@ -350,7 +355,7 @@ mod tests {
         assert_eq!(command.name, deserialized_command.name);
     }
 
-    fn verify_handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &mut dyn EventProducer) -> CommandResponse {
+    fn verify_handle_create_user(command_accessor: &mut CommandAccessor, event_producer: &dyn EventProducer) -> CommandResponse {
         let command: Box<TestCreateUserCommand> = command_accessor.get_command();
 
         assert_eq!(command.user_id, "user_id");
@@ -386,14 +391,14 @@ mod tests {
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
             let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(TokioOutboundChannel::new(event_sender)));
-            let mut command_service_server = CommandServiceServer::new(&command_store, &mut event_producer);
+            let outbound_channel = TokioOutboundChannel {
+                sender: Mutex::new(Some(response_sender))
+            };
+            let command_service_server = CommandServiceServer::new(&command_store, &mut event_producer, &outbound_channel);
 
             match command_receiver.await {
-                Ok(mut k) => {
-                    let mut channel1 = TokioOutboundChannel {
-                        sender: Some(response_sender)
-                    };
-                    command_service_server.handle_message(&mut k, &mut channel1)
+                Ok(k) => {
+                    command_service_server.consume(k.as_slice())
                 }
                 Err(_) => {
                     assert!(false);
@@ -410,8 +415,7 @@ mod tests {
             Box::new(TokioOutboundChannel::new(command_sender))
         );
 
-        let config = Config::builder().set_default("a", "b").unwrap().build();
-        let client_handle = command_service_client.start(config.unwrap());
+        let client_handle = command_service_client.start(Config::default());
         let actual_command_response = command_service_client.send_command(&command).await.unwrap();
         assert_eq!(actual_command_response, CommandResponse::Ok);
 

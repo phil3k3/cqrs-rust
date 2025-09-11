@@ -17,7 +17,7 @@ pub trait EventProducer {
     fn produce(&self, event: &dyn Event) ;
 }
 
-pub trait OutboundChannel {
+pub trait OutboundChannel : Send+Sync{
     fn send(&self, key: Vec<u8>, message: Vec<u8>);
 }
 

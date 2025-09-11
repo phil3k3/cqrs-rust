@@ -141,15 +141,16 @@ async fn main() -> io::Result<()> {
             &settings_inner.get_string("bootstrap_server").unwrap(),
         );
 
+        let mutex = Mutex::new(
+            CommandServiceClient::new(
+                &settings_inner.get_string("service_id").unwrap(),
+                Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
+                Box::new(kafka_command_channel),
+            )
+        );
         let command_service_client_data = web::Data::new(
             AppState {
-                client: Mutex::new(
-                    CommandServiceClient::new(
-                        &settings_inner.get_string("service_id").unwrap(),
-                        Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
-                        Box::new(kafka_command_channel),
-                    )
-                )
+                client: mutex
             }
         );
         match command_service_client_data.client.lock() {
@@ -161,9 +162,9 @@ async fn main() -> io::Result<()> {
             }
         }
         App::new()
-            .app_data(command_service_client_data.clone())
+            .app_data(command_service_client_data)
             .service(post_user)
-    }).bind(("127.0.0.1", 8080))?
+    }).workers(1).bind(("127.0.0.1", 8080))?
         .run()
         .await
 }

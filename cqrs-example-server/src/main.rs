@@ -65,7 +65,7 @@ async fn main() {
 
     env_logger::init();
 
-    let mut command_response_channel = KafkaOutboundChannel::new(
+    let command_response_channel = KafkaOutboundChannel::new(
         &settings.get_string("response_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap(),
     );
@@ -90,7 +90,7 @@ async fn main() {
         &command_response_channel
     );
     
-    let mut command_channel = StreamKafkaInboundChannel::new(
+    let command_channel = StreamKafkaInboundChannel::new(
         "COMMAND-SERVER",
         &[&settings.get_string("command_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
