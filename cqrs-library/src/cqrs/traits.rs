@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::ops::DerefMut;
 
 #[typetag::serde(tag = "type")]
 pub trait Event: Debug {
