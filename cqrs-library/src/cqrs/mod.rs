@@ -10,7 +10,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use config::Config;
-use log::{debug, error, info};
+use log::{debug, error};
 use prost::Message;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::{channel, Sender};
@@ -81,7 +81,7 @@ impl EventListener {
     }
 
     pub fn consume(&self, event_message: &[u8]) {
-        let proto_message = DomainEventEnvelopeProto::decode(&mut Cursor::new(&event_message)).unwrap();
+        let proto_message = DomainEventEnvelopeProto::decode(event_message).unwrap();
         let json_message = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice());
         match json_message {
             Ok(event) => {
@@ -172,7 +172,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
 
     fn read_response(command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
         command_response_channel.consume().map(|message| {
-            let result = CommandResponseEnvelopeProto::decode(&mut Cursor::new(&message));
+            let result = CommandResponseEnvelopeProto::decode(message.as_slice());
             match result {
                 Ok(command_response) => {
                     let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response);

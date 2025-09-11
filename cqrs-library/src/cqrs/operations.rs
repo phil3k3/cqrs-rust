@@ -27,7 +27,7 @@ pub fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id
 }
 
 pub fn handle_command(serialized_command: &Vec<u8>, command_store: &CommandStore, event_producer: &mut CqrsEventProducer) -> Option<Vec<u8>> {
-    let result = CommandEnvelopeProto::decode(&mut Cursor::new(&serialized_command)).unwrap();
+    let result = CommandEnvelopeProto::decode(serialized_command.as_slice()).unwrap();
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);
 

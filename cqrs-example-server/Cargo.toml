@@ -8,11 +8,9 @@ edition = "2021"
 [dependencies]
 cqrs-library = { path = "../cqrs-library" }
 cqrs-kafka = { path = "../cqrs-kafka" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-log = "0.4.8"
-env_logger = "0.10.0"
-tokio = { version = "1.35.0", features = ["macros", "rt-multi-thread", "time"] }
-typetag = "0.2"
-
-config = "0.13.3"
+serde = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tokio = { workspace = true }
+typetag = { workspace = true }
+config = { workspace = true }
