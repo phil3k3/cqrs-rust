@@ -7,26 +7,12 @@ mod error;
 mod tests {
     use std::sync::mpsc::channel;
     use std::{thread};
-    use std::thread::JoinHandle;
     use log::info;
-    use testcontainers::clients;
+    use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
     use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
     use crate::inbound::KafkaInboundChannel;
     use crate::outbound::KafkaOutboundChannel;
-
-    impl<TARGET:Send + 'static> Runtime<TARGET> {
-        pub fn new<FUNCTION: FnOnce() -> TARGET + Send + 'static>(f: FUNCTION) -> JoinHandle<TARGET>  {
-            thread::spawn(f)
-        }
-    }
-
-
-    pub struct Runtime<TARGET> {
-        handle: JoinHandle<TARGET>
-    }
-
-
 
     #[tokio::test]
     async fn test_sync_send_receive() {
@@ -35,14 +21,14 @@ mod tests {
 
         info!("Starting transmission test via Kafka");
 
-        let docker = clients::Cli::default();
-        let kafka_node = docker.run(Kafka::default());
+        let kafka_node = Kafka::default().start().await.unwrap();
+        let host_port = kafka_node.get_host_port_ipv4(KAFKA_PORT).await.unwrap();
 
-        info!("Started Kafka container");
+        info!("Started Kafka container at port {}", host_port);
 
         let bootstrap_servers = format!(
             "127.0.0.1:{}",
-            kafka_node.get_host_port_ipv4(KAFKA_PORT)
+            host_port
         );
 
         info!("{}", bootstrap_servers);
@@ -62,7 +48,7 @@ mod tests {
         sender.join().expect("The sender thread has panicked");
         info!("Message sent");
 
-        let receiver = Runtime::new(move || {
+        let receiver = thread::spawn(move || {
             loop {
                 info!("Waiting for message");
                 let message = inbound_channel.consume();
