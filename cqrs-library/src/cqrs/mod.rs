@@ -5,7 +5,6 @@ pub mod traits;
 pub mod messages;
 mod operations;
 use std::collections::HashMap;
-use std::io::Cursor;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +16,7 @@ use tokio::sync::oneshot::{channel, Sender};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use crate::cqrs::command::{CommandStore};
-use crate::cqrs::traits::{Command, Event, EventProducer, InboundChannel, OutboundChannel};
+use crate::cqrs::traits::{Command, Event, EventProducer, InboundChannel, MessageConsumer, OutboundChannel};
 use cqrs_messages::cqrs::messages::{CommandResponseEnvelopeProto, DomainEventEnvelopeProto};
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
 use crate::cqrs::operations::{handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf};
@@ -31,7 +30,7 @@ pub struct CqrsEventProducer {
 
 impl EventProducer for CqrsEventProducer {
 
-    fn produce(&mut self, event: &dyn Event) {
+    fn produce(&self, event: &dyn Event) {
         let event_message = self.convert_event(event);
         self.event_channel.send(Vec::from(event.get_id()), event_message);
     }
@@ -43,7 +42,7 @@ impl<'e> CqrsEventProducer {
         CqrsEventProducer { service_id: String::from(service_id), event_channel }
     }
 
-    fn convert_event(&mut self, event: &dyn Event) -> Vec<u8> {
+    fn convert_event(&self, event: &dyn Event) -> Vec<u8> {
         let event_id = Uuid::new_v4().to_string();
         serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str())
     }
@@ -79,9 +78,11 @@ impl EventListener {
             .or_insert(Vec::new())
             .push(handler);
     }
+}
 
-    pub fn consume(&self, event_message: &[u8]) {
-        let proto_message = DomainEventEnvelopeProto::decode(event_message).unwrap();
+impl MessageConsumer for EventListener {
+    fn consume(&self, message: &[u8]) {
+        let proto_message = DomainEventEnvelopeProto::decode(message).unwrap();
         let json_message = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice());
         match json_message {
             Ok(event) => {
@@ -201,27 +202,31 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
 
 pub struct CommandServiceServer<'c> {
     command_store: &'c CommandStore,
-    event_producer: &'c mut CqrsEventProducer
+    event_producer: &'c mut CqrsEventProducer,
+    command_response_channel: &'c dyn OutboundChannel,
 }
 
-impl<'a> CommandServiceServer<'a> {
-
-    pub fn new(command_store: &'a CommandStore, event_producer: &'a mut CqrsEventProducer) -> Box<CommandServiceServer<'a>> {
-        Box::new(CommandServiceServer { command_store, event_producer })
-    }
-
-    pub fn handle_message(&mut self, message: &mut Vec<u8>, command_response_channel: &mut dyn OutboundChannel) {
-        let command_response = handle_command(&message, &self.command_store, &mut self.event_producer);
+impl MessageConsumer for CommandServiceServer<'_> {
+    fn consume(&self,  message: &[u8]) {
+        let command_response = handle_command(&message, &self.command_store, &self.event_producer);
         match command_response {
             None => {
                 error!("No command response")
             }
             Some(command_response) => {
-                command_response_channel.send("".as_bytes().to_vec(), command_response);
+                self.command_response_channel.send("".as_bytes().to_vec(), command_response);
             }
         }
     }
+}
 
+impl<'a> CommandServiceServer<'a> {
+
+    pub fn new(command_store: &'a CommandStore,
+               event_producer: &'a mut CqrsEventProducer,
+               command_response_channel: &'a dyn OutboundChannel) -> CommandServiceServer<'a> {
+        CommandServiceServer { command_store, event_producer, command_response_channel }
+    }
 }
 
 
@@ -230,7 +235,7 @@ impl<'a> CommandServiceServer<'a> {
 #[cfg(test)]
 mod tests {
     use std::env;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use config::Config;
     use serde::{Serialize, Deserialize};
 
@@ -275,22 +280,22 @@ mod tests {
 
 
     struct TokioOutboundChannel {
-        sender: Option<Sender<Vec<u8>>>
+        sender: Mutex<Option<Sender<Vec<u8>>>>
     }
 
     impl TokioOutboundChannel {
         fn new(sender: Sender<Vec<u8>>) -> Self {
             TokioOutboundChannel {
-                sender: Some(sender)
+                sender: Mutex::new(Some(sender))
             }
         }
     }
 
     impl OutboundChannel for TokioOutboundChannel {
-        fn send(&mut self, _key: Vec<u8>, message: Vec<u8>) {
-            if let Some(sender) = self.sender.take() {
-                sender.send(message).expect("Message sending failed");
-            }
+        fn send(&self, _key: Vec<u8>, message: Vec<u8>) {
+            let mut guard  = self.sender.lock().expect("Could not lock mutex");
+            let tx = guard.take().expect("Could not take sender");
+            tx.send(message).expect("Could not send message");
         }
     }
 

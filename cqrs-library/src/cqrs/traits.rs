@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::ops::DerefMut;
 use serde::{Deserialize, Serialize};
 
 #[typetag::serde(tag = "type")]
@@ -13,15 +14,19 @@ pub trait Event : Debug {
 }
 
 pub trait EventProducer {
-    fn produce(&mut self, event: &dyn Event) ;
+    fn produce(&self, event: &dyn Event) ;
 }
 
 pub trait OutboundChannel {
-    fn send(&mut self, key: Vec<u8>, message: Vec<u8>);
+    fn send(&self, key: Vec<u8>, message: Vec<u8>);
 }
 
 pub trait InboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>>;
+}
+
+pub trait MessageConsumer {
+    fn consume(&self, message: &[u8]);
 }
 
 pub trait Command<'de> : Deserialize<'de> + Serialize {

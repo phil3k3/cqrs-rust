@@ -1,40 +1,23 @@
-use std::time::Duration;
-use futures::TryStreamExt;
-use log::info;
-use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
-use rdkafka::config::RDKafkaLogLevel;
-use rdkafka::consumer::{BaseConsumer, Consumer, ConsumerContext, Rebalance, StreamConsumer};
-use rdkafka::error::{KafkaResult};
-use cqrs_library::cqrs::EventListener;
-use cqrs_library::cqrs::traits::InboundChannel;
+use crate::operations::{create_consumer, CustomContext};
 use crate::prelude::*;
+use cqrs_library::cqrs::traits::{InboundChannel, MessageConsumer};
+use futures::TryStreamExt;
+use rdkafka::config::RDKafkaLogLevel;
+use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
+use rdkafka::{ClientConfig, Message};
+use std::sync::Arc;
+use std::time::Duration;
 
-struct CustomContext;
-
-impl ClientContext for CustomContext {}
-
-impl ConsumerContext for CustomContext {
-    fn pre_rebalance(&self, _base_consumer: &BaseConsumer<Self>, rebalance: &Rebalance) {
-        info!("Pre rebalance {:?}", rebalance);
-    }
-
-    fn post_rebalance(&self, _base_consumer: &BaseConsumer<Self>, rebalance: &Rebalance) {
-        info!("Post rebalance {:?}", rebalance);
-    }
-
-    fn commit_callback(&self, result: KafkaResult<()>, _offsets: &TopicPartitionList) {
-        info!("Committing offsets: {:?}", result);
-    }
-}
 type LoggingConsumer = BaseConsumer<CustomContext>;
-type LoggingStreamingConsumer = StreamConsumer<CustomContext>;
+
 
 pub struct KafkaInboundChannel {
     consumer: BaseConsumer<CustomContext>,
 }
 
-pub struct StreamKafkaInboundChannel {
+pub struct StreamKafkaInboundChannel<T: MessageConsumer> {
     consumer: StreamConsumer<CustomContext>,
+    message_consumer: Arc<T>
 }
 
 impl KafkaInboundChannel {
@@ -62,30 +45,34 @@ impl KafkaInboundChannel {
     }
 }
 
-impl StreamKafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> Result<StreamKafkaInboundChannel> {
-        let result = StreamKafkaInboundChannel::create_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+impl InboundChannel for KafkaInboundChannel {
+    fn consume(&mut self) -> Option<Vec<u8>> {
+        self.consumer.poll(Duration::from_secs(1))
+            .and_then(|x| {
+                match x {
+                    Ok(t) => {
+                        let option = t.payload();
+                        option.and_then(|y| {
+                            Some(y.to_vec())
+                        })
+                    },
+                    Err(_v) => None
+                }
+            }
+            )
+    }
+}
+
+
+impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
+    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str, message_consumer: T) -> Result<StreamKafkaInboundChannel<T>> {
+        let result = create_consumer(bootstrap_server.to_string(), service_id.to_string())?;
         let channel = StreamKafkaInboundChannel {
-            consumer: result
+            consumer: result,
+            message_consumer: Arc::new(message_consumer),
         };
         channel.consumer.subscribe(&topics.to_vec()).expect("Could not subscribe");
         Ok(channel)
-    }
-
-    fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingStreamingConsumer> {
-        let mut config = ClientConfig::new();
-        config
-            .set("group.id", format!("{}-consumer", &service_id))
-            .set("bootstrap.servers", &bootstrap_server)
-            .set("session.timeout.ms", "6000")
-            .set("enable.auto.commit", "true")
-            .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
-
-        // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
-        config.create_with_context(CustomContext {}).map_err(|x| x.into())
     }
 
     pub async fn async_consume(&mut self) -> Result<Vec<u8>> {
@@ -97,11 +84,13 @@ impl StreamKafkaInboundChannel {
         }
     }
 
-    pub async fn consume_async_blocking(&self, event_listener: &EventListener) {
+    pub async fn consume_async_blocking(&self) {
+        let consumer = self.message_consumer.clone();
         self.consumer.stream().try_for_each(|borrowed_message| {
+            let consumer = consumer.clone();
             async move {
                 if let Some(message) = borrowed_message.payload() {
-                    event_listener.consume(message);
+                    consumer.consume(message);
                 }
                 Ok(())
             }
@@ -109,20 +98,3 @@ impl StreamKafkaInboundChannel {
     }
 }
 
-impl InboundChannel for KafkaInboundChannel {
-    fn consume(&mut self) -> Option<Vec<u8>> {
-        self.consumer.poll(Duration::from_secs(1))
-                .and_then(|x| {
-                    match x {
-                        Ok(t) => {
-                            let option = t.payload();
-                            option.and_then(|y| {
-                                Some(y.to_vec())
-                            })
-                        },
-                        Err(_v) => None
-                    }
-                }
-                )
-    }
-}

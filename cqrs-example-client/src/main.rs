@@ -124,9 +124,10 @@ async fn main() -> io::Result<()> {
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
+            event_listener,
         ).expect("Could not create kafka event listener channel");
 
-        kafka_event_listener_channel.consume_async_blocking(&event_listener).await;
+        kafka_event_listener_channel.consume_async_blocking().await;
     });
 
     HttpServer::new(|| {

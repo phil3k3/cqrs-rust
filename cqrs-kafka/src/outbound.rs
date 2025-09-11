@@ -79,7 +79,7 @@ impl KafkaOutboundChannel {
 
 
 impl OutboundChannel for KafkaOutboundChannel {
-    fn send(&mut self, key: Vec<u8>, message: Vec<u8>) {
+    fn send(&self, key: Vec<u8>, message: Vec<u8>) {
         self.producer
             .send(BaseRecord::to(self.topic.as_str())
                 .key(&key)

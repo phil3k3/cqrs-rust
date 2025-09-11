@@ -4,7 +4,7 @@ use crate::cqrs::Command;
 use crate::cqrs::messages::{CommandMetadata, CommandResponse, CommandServerResult};
 use crate::cqrs::traits::EventProducer;
 
-type CommandHandlerFn = fn(&mut CommandAccessor, &mut dyn EventProducer) -> CommandResponse;
+type CommandHandlerFn = fn(&mut CommandAccessor, &dyn EventProducer) -> CommandResponse;
 
 pub struct CommandAccessor<'a> {
     pub serialized_command: &'a Vec<u8>,
@@ -14,7 +14,7 @@ pub struct CommandAccessor<'a> {
 impl<'a> CommandAccessor<'a> {
 
     pub fn new(serialized_command: &'a Vec<u8>, command_id: String) -> CommandAccessor {
-        CommandAccessor { 
+        CommandAccessor {
             serialized_command,
             command_id,
             command_metadata: None
@@ -46,7 +46,7 @@ impl<'a> CommandStore {
     pub fn register_handler(&mut self, command: &str, handler: CommandHandlerFn) {
         self.command_handlers.insert(String::from(command), handler);
     }
-    pub fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a mut dyn EventProducer) -> Option<CommandServerResult> {
+    pub fn handle_command(&self, command_type: &str, command_accessor: &mut CommandAccessor, event_producer: &'a dyn EventProducer) -> Option<CommandServerResult> {
         let command_response = self.command_handlers.get(command_type).unwrap()(command_accessor, event_producer);
         Some(CommandServerResult {
             command_response,

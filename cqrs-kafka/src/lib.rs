@@ -2,6 +2,7 @@ pub mod inbound;
 pub mod outbound;
 mod prelude;
 mod error;
+mod operations;
 
 #[cfg(test)]
 mod tests {
