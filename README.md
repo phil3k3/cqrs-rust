@@ -26,4 +26,9 @@ sequenceDiagram
 As this project is still early stage, it's advised not to use it in production-grade environments. 
 Contributions are welcome.
 
+# Future improvements
+* Introduce a state store to allow for snaphot based recovery of the command server state
+* Improve the developer experience
+* Fully introduce Rust-style error handling
+  
 
