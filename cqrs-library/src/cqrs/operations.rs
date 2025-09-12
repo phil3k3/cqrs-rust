@@ -8,9 +8,10 @@ use cqrs_messages::cqrs::messages::{
 };
 use prost::Message;
 use uuid::Uuid;
+use crate::prelude::*;
 
-pub fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> Vec<u8> {
-    let serialized_event = serde_json::to_vec(&event).unwrap();
+pub fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> Result<Vec<u8>> {
+    let serialized_event = serde_json::to_vec(&event)?;
     let event_id = String::from(event_id);
     let event_envelope = DomainEventEnvelopeProto {
         id: event_id.to_owned(),
@@ -31,25 +32,19 @@ pub fn handle_command(
     serialized_command: &[u8],
     command_store: &CommandStore,
     event_producer: &CqrsEventProducer,
-) -> Option<Vec<u8>> {
-    let result = CommandEnvelopeProto::decode(serialized_command).unwrap();
+) -> Result<Option<Vec<u8>>> {
+    let result = CommandEnvelopeProto::decode(serialized_command)?;
 
     let mut deserializer = CommandAccessor::new(&result.command, result.id);
 
     let command_response =
         command_store.handle_command(&result.r#type, &mut deserializer, event_producer);
 
-    match command_response {
-        None => None,
-        Some(command_server_result) => {
-            let option = serialize_command_response_to_protobuf(
-                command_server_result.command_response,
-                &deserializer,
-                command_server_result.service_id,
-            );
-            Some(option.unwrap())
-        }
-    }
+    serialize_command_response_to_protobuf(
+        command_response.command_response,
+        &deserializer,
+        command_response.service_id,
+    )
 }
 
 pub fn serialize_command_to_protobuf<'a, C: Command<'a>>(
@@ -57,8 +52,8 @@ pub fn serialize_command_to_protobuf<'a, C: Command<'a>>(
     command: &C,
     service_id: String,
     service_instance_id: u32,
-) -> Vec<u8> {
-    let serialized_command = serde_json::to_vec(command).unwrap();
+) -> Result<Vec<u8>> {
+    let serialized_command = serde_json::to_vec(command)?;
     let service_instance_id_i32 = service_instance_id as i32;
     let command_id = String::from(command_id);
     let command_envelope = CommandEnvelopeProto {
@@ -79,18 +74,18 @@ pub fn serialize_command_response_to_protobuf(
     command_response: CommandResponse,
     command_accessor: &CommandAccessor,
     service_id: String,
-) -> Option<Vec<u8>> {
+) -> Result<Option<Vec<u8>>> {
     let command = &command_accessor.command_metadata;
     let command_id = &command_accessor.command_id;
     match command {
-        None => None,
+        None => Ok(None),
         Some(command) => {
             let command_response_result = CommandResponseResult {
                 entity_id: command.subject.to_owned(),
                 result: command_response.to_string(),
             };
             let command_response_serialized =
-                serde_json::to_string(&command_response_result).unwrap();
+                serde_json::to_string(&command_response_result)?;
             let response_envelope = CommandResponseEnvelopeProto {
                 transaction_id: Uuid::new_v4().to_string(),
                 command_id: String::from(command_id),
@@ -102,14 +97,15 @@ pub fn serialize_command_response_to_protobuf(
                 error: None,
                 id: Uuid::new_v4().to_string(),
             };
-            Some(serialize_protobuf(&response_envelope))
+            let vec = serialize_protobuf(&response_envelope);
+            vec.map(|x| Some(x))
         }
     }
 }
 
-fn serialize_protobuf<M: Message + Sized>(envelope: &M) -> Vec<u8> {
+fn serialize_protobuf<M: Message + Sized>(envelope: &M) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.reserve(envelope.encoded_len());
-    envelope.encode(&mut buf).expect("Encoding failed");
-    buf
+    envelope.encode(&mut buf)?;
+    Ok(buf)
 }

@@ -51,7 +51,7 @@ impl<'e> CqrsEventProducer {
         }
     }
 
-    fn convert_event(&self, event: &dyn Event) -> Vec<u8> {
+    fn convert_event(&self, event: &dyn Event) -> Result<Vec<u8>> {
         let event_id = Uuid::new_v4().to_string();
         serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str())
     }
@@ -89,21 +89,15 @@ impl EventListener {
 }
 
 impl MessageConsumer for EventListener {
-    fn consume(&self, message: &[u8]) {
-        let proto_message = DomainEventEnvelopeProto::decode(message).unwrap();
-        let json_message = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice());
-        match json_message {
-            Ok(event) => {
-                if let Some(handlers) = self.handlers.get(proto_message.r#type.as_str()) {
-                    for handler in handlers {
-                        handler(event.deref());
-                    }
-                }
-            }
-            Err(err) => {
-                error!("Error deserializing event {}", err);
+    fn consume(&self, message: &[u8]) -> Result<()> {
+        let proto_message = DomainEventEnvelopeProto::decode(message)?;
+        let event = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice())?;
+        if let Some(handlers) = self.handlers.get(proto_message.r#type.as_str()) {
+            for handler in handlers {
+                handler(event.deref());
             }
         }
+        Ok(())
     }
 }
 
@@ -179,7 +173,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
             command,
             String::from(&self.service_id),
             self.service_instance_id,
-        );
+        )?;
         let (tx, rx) = channel();
 
         {
@@ -202,14 +196,14 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         &mut self,
         command: &C,
         command_channel: &mut (dyn OutboundChannel + Send + Sync),
-    ) {
+    ) -> Result<()> {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(
             &command_id,
             command,
             String::from(&self.service_id),
             self.service_instance_id,
-        );
+        )?;
         command_channel.send(
             command.get_subject().as_bytes().to_vec(),
             serialized_command,
@@ -252,7 +246,7 @@ pub struct CommandServiceServer<'c> {
 }
 
 impl MessageConsumer for CommandServiceServer<'_> {
-    fn consume(&self, message: &[u8]) {
+    fn consume(&self, message: &[u8]) -> Result<()> {
         let command_response = handle_command(&message, &self.command_store, &self.event_producer);
         match command_response {
             None => {

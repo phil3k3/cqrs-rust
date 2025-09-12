@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use crate::prelude::*;
 
 #[typetag::serde(tag = "type")]
 pub trait Event: Debug {
@@ -25,7 +26,7 @@ pub trait InboundChannel {
 }
 
 pub trait MessageConsumer {
-    fn consume(&self, message: &[u8]);
+    fn consume(&self, message: &[u8]) -> Result<()>;
 }
 
 pub trait Command<'de>: Deserialize<'de> + Serialize {

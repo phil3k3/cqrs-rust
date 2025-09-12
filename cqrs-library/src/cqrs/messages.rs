@@ -22,6 +22,7 @@ pub struct CommandResponseResult {
 pub enum CommandResponse {
     Ok,
     Error,
+    NotFound
 }
 
 impl Display for CommandResponse {
@@ -32,6 +33,9 @@ impl Display for CommandResponse {
             }
             CommandResponse::Error => {
                 write!(f, "Error")
+            }
+            CommandResponse::NotFound => {
+                write!(f, "NotFound")
             }
         }
     }
