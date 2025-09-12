@@ -1,3 +1,6 @@
+mod prelude;
+mod error;
+
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 use cqrs_kafka::outbound::KafkaOutboundChannel;
@@ -9,19 +12,40 @@ use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
 
+use crate::prelude::*;
+
 fn handle_create_user(
     command_accessor: &mut CommandAccessor,
     event_producer: &dyn EventProducer,
 ) -> CommandResponse {
-    let command: Box<TestCreateUserCommand> = command_accessor.get_command();
+    let command: Result<Box<TestCreateUserCommand>> = command_accessor.get_command()
+        .map_err(|x| x.into());
 
-    info!("Creating user {} with id {}", command.name, command.user_id);
-    let event = UserCreatedEvent {
-        user_id: command.user_id,
-        name: command.name,
-    };
-    event_producer.produce(&event);
-    CommandResponse::Ok
+    match command {
+        Ok(command) => {
+            info!("Creating user {} with id {}", command.name, command.user_id);
+            let event = UserCreatedEvent {
+                user_id: command.user_id,
+                name: command.name,
+            };
+            let result = event_producer.produce(&event);
+            match result {
+                Ok(_) => {
+                    CommandResponse::Ok
+                }
+                Err(error) => {
+                    error!("Error processing command: {}", error);
+                    CommandResponse::Error
+                }
+            }
+        }
+        Err(error) => {
+            error!("Error processing command: {}", error);
+            CommandResponse::Error
+        }
+    }
+
+
 }
 
 #[derive(Debug, Deserialize, Serialize)]

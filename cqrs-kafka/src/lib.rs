@@ -51,7 +51,6 @@ mod tests {
             let message = inbound_channel.consume();
             match message {
                 Some(content) => {
-                    let string = String::from_utf8(content).unwrap();
                     info!("Received message {}", &string);
                     assert_eq!("MESSAGE", string);
                     break;

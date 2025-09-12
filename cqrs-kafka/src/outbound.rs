@@ -24,8 +24,7 @@ impl ProducerContext for ProducerCallbackLogger {
         delivery_result: &DeliveryResult<'_>,
         _delivery_opaque: Self::DeliveryOpaque,
     ) {
-        let unwrapped_result = delivery_result.as_ref();
-        match unwrapped_result {
+        match delivery_result.as_ref() {
             Ok(msg) => {
                 let key: &str = msg.key_view().unwrap().unwrap();
                 info!(

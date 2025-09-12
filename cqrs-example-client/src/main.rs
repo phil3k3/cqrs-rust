@@ -1,3 +1,6 @@
+mod prelude;
+mod error;
+
 use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use config::Config;
 use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
@@ -10,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::{env, io};
 use uuid::Uuid;
+
+use crate::prelude::*;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
@@ -90,12 +95,13 @@ async fn post_user(
     }
 }
 
-fn create_channel(settings: Config) -> Box<KafkaInboundChannel> {
-    Box::new(KafkaInboundChannel::new(
+fn create_channel(settings: Config) -> Result<Box<KafkaInboundChannel>> {
+    KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-    ))
+    ).map_err(|x| x.into())
+        .map(|x| Box::new(x))
 }
 
 #[tokio::main]

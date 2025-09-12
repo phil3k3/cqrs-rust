@@ -1,3 +1,3 @@
 pub mod cqrs;
-mod error;
+pub mod error;
 mod prelude;

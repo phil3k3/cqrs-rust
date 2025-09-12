@@ -17,3 +17,4 @@ log = { workspace = true }
 env_logger = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
+thiserror = { workspace = true }

@@ -1,14 +1,12 @@
-use crate::operations::{create_consumer, CustomContext};
+use crate::operations::{create_basic_consumer, create_streaming_consumer, CustomContext};
 use crate::prelude::*;
 use cqrs_library::cqrs::traits::{InboundChannel, MessageConsumer};
 use futures::TryStreamExt;
-use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
-use rdkafka::{ClientConfig, Message};
+use rdkafka::Message;
 use std::sync::Arc;
 use std::time::Duration;
 
-type LoggingConsumer = BaseConsumer<CustomContext>;
 
 pub struct KafkaInboundChannel {
     consumer: BaseConsumer<CustomContext>,
@@ -20,36 +18,19 @@ pub struct StreamKafkaInboundChannel<T: MessageConsumer> {
 }
 
 impl KafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> KafkaInboundChannel {
+    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> Result<KafkaInboundChannel> {
+        let consumer = create_basic_consumer(
+            bootstrap_server.to_string(),
+            service_id.to_string(),
+        )?;
         let channel = KafkaInboundChannel {
-            consumer: KafkaInboundChannel::create_consumer(
-                bootstrap_server.to_string(),
-                service_id.to_string(),
-            )
-            .unwrap(),
+            consumer
         };
         channel
             .consumer
             .subscribe(&topics.to_vec())
             .expect("Could not subscribe");
-        channel
-    }
-    fn create_consumer(bootstrap_server: String, service_id: String) -> Result<LoggingConsumer> {
-        let mut config = ClientConfig::new();
-        config
-            .set("group.id", format!("{}-consumer", &service_id))
-            .set("bootstrap.servers", &bootstrap_server)
-            .set("session.timeout.ms", "6000")
-            .set("enable.auto.commit", "true")
-            .set("isolation.level", "read_uncommitted")
-            .set("auto.offset.reset", "earliest")
-            .set("debug", "consumer,cgrp,topic,fetch");
-
-        // all nodes of the same service are in a group and will get some partitions assigned
-        config.set_log_level(RDKafkaLogLevel::Debug);
-        config
-            .create_with_context(CustomContext {})
-            .map_err(|x| x.into())
+        Ok(channel)
     }
 }
 
@@ -74,9 +55,9 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         bootstrap_server: &str,
         message_consumer: T,
     ) -> Result<StreamKafkaInboundChannel<T>> {
-        let result = create_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+        let consumer = create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string())?;
         let channel = StreamKafkaInboundChannel {
-            consumer: result,
+            consumer,
             message_consumer: Arc::new(message_consumer),
         };
         channel.consumer.subscribe(&topics.to_vec())?;
