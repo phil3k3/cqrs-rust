@@ -29,6 +29,5 @@ Contributions are welcome.
 # Future improvements
 * Introduce a state store to allow for snaphot based recovery of the command server state
 * Improve the developer experience
-* Fully introduce Rust-style error handling
   
 
