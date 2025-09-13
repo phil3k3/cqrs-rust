@@ -1,4 +1,4 @@
-mod error;
+pub mod error;
 pub mod inbound;
 mod operations;
 pub mod outbound;
@@ -29,12 +29,12 @@ mod tests {
         let bootstrap_servers = format!("127.0.0.1:{}", host_port);
 
         info!("{}", bootstrap_servers);
-        let mut outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers);
+        let mut outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers).unwrap();
 
         outbound_channel.create_topic("TEST").await;
 
         let mut inbound_channel =
-            KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers);
+            KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers).unwrap();
 
         inbound_channel.consume();
 

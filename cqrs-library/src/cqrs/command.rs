@@ -4,6 +4,8 @@ use crate::cqrs::Command;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::prelude::*;
+
 type CommandHandlerFn = fn(&mut CommandAccessor, &dyn EventProducer) -> CommandResponse;
 
 pub struct CommandAccessor<'a> {
@@ -20,15 +22,15 @@ impl<'a> CommandAccessor<'a> {
         }
     }
 
-    pub fn get_command<T: Deserialize<'a> + Command<'a>>(&mut self) -> Box<T> {
+    pub fn get_command<T: Deserialize<'a> + Command<'a>>(&mut self) -> Result<Box<T>> {
         let slice = self.serialized_command.as_slice();
-        let command = serde_json::from_slice::<T>(slice).unwrap();
+        let command = serde_json::from_slice::<T>(slice)?;
         self.command_metadata = Some(CommandMetadata {
             subject: command.get_subject(),
             command_type: command.get_type(),
             version: command.get_version(),
         });
-        Box::new(command)
+        Ok(Box::new(command))
     }
 }
 
@@ -52,12 +54,19 @@ impl<'a> CommandStore {
         command_type: &str,
         command_accessor: &mut CommandAccessor,
         event_producer: &'a dyn EventProducer,
-    ) -> Option<CommandServerResult> {
-        let command_response =
-            self.command_handlers.get(command_type).unwrap()(command_accessor, event_producer);
-        Some(CommandServerResult {
-            command_response,
-            service_id: self.service_id.to_owned(),
-        })
+    ) -> CommandServerResult {
+        let option = self.command_handlers.get(command_type);
+        if let Some(result) = option {
+            let command_response = result(command_accessor, event_producer);
+            CommandServerResult {
+                command_response,
+                service_id: self.service_id.to_owned(),
+            }
+        } else {
+            CommandServerResult {
+                command_response: CommandResponse::NotFound,
+                service_id: self.service_id.to_owned(),
+            }
+        }
     }
 }

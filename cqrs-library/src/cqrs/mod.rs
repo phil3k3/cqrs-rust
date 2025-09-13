@@ -33,10 +33,11 @@ pub struct CqrsEventProducer {
 }
 
 impl EventProducer for CqrsEventProducer {
-    fn produce(&self, event: &dyn Event) {
-        let event_message = self.convert_event(event);
+    fn produce(&self, event: &dyn Event) -> Result<()> {
+        let event_message = self.convert_event(event)?;
         self.event_channel
             .send(Vec::from(event.get_id()), event_message);
+        Ok(())
     }
 }
 
@@ -51,7 +52,7 @@ impl<'e> CqrsEventProducer {
         }
     }
 
-    fn convert_event(&self, event: &dyn Event) -> Vec<u8> {
+    fn convert_event(&self, event: &dyn Event) -> Result<Vec<u8>> {
         let event_id = Uuid::new_v4().to_string();
         serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str())
     }
@@ -65,7 +66,8 @@ pub struct CommandServiceClient<T> {
     channel_builder: InboundChannelBuilder<T>,
 }
 
-type InboundChannelBuilder<T> = Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Box<T> + Sync + Send>>>>;
+type InboundChannelBuilder<T> =
+    Arc<Mutex<Option<Box<dyn FnOnce(Config) -> Result<Box<T>> + Sync + Send>>>>;
 
 pub struct EventListener {
     handlers: HashMap<String, Vec<EventHandlerFn>>,
@@ -89,21 +91,15 @@ impl EventListener {
 }
 
 impl MessageConsumer for EventListener {
-    fn consume(&self, message: &[u8]) {
-        let proto_message = DomainEventEnvelopeProto::decode(message).unwrap();
-        let json_message = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice());
-        match json_message {
-            Ok(event) => {
-                if let Some(handlers) = self.handlers.get(proto_message.r#type.as_str()) {
-                    for handler in handlers {
-                        handler(event.deref());
-                    }
-                }
-            }
-            Err(err) => {
-                error!("Error deserializing event {}", err);
+    fn consume(&self, message: &[u8]) -> Result<()> {
+        let proto_message = DomainEventEnvelopeProto::decode(message)?;
+        let event = serde_json::from_slice::<Box<dyn Event>>(proto_message.event.as_slice())?;
+        if let Some(handlers) = self.handlers.get(proto_message.r#type.as_str()) {
+            for handler in handlers {
+                handler(event.deref());
             }
         }
+        Ok(())
     }
 }
 
@@ -129,41 +125,44 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         let channel_reader = self.channel_builder.clone();
 
         tokio::task::spawn(async move {
-            dbg!("RECEIVE");
-            dbg!(Arc::as_ptr(&pending_responses_senders));
             let mut guard = channel_reader.lock().await;
             if let Some(func) = guard.take() {
-                let mut channel = func(settings);
-                loop {
-                    let response = CommandServiceClient::read_response(&mut channel);
-                    match response {
-                        None => {
-                            debug!("No result");
-                        }
-                        Some(command_response) => {
-                            let mut waiting_callers = pending_responses_senders.lock().await;
-                            {
-                                dbg!("map addr (remove) =", (&*waiting_callers as *const _));
-                                dbg!(&waiting_callers);
-                                dbg!(&command_response);
-                                if let Some(waiting_caller) =
-                                    waiting_callers.remove(command_response.1.as_str())
+                let channel = func(settings);
+                match channel {
+                    Ok(mut channel) => loop {
+                        let response = CommandServiceClient::read_response(&mut channel);
+                        match response {
+                            None => {
+                                debug!("No result");
+                            }
+                            Some(command_response) => {
+                                let mut waiting_callers = pending_responses_senders.lock().await;
                                 {
-                                    debug!(
-                                        "Received response for {}: {}",
-                                        command_response.1.as_str(),
-                                        command_response.0
-                                    );
-                                    waiting_caller
-                                        .send(command_response.0)
-                                        .expect("Command could not be delivered");
-                                } else {
-                                    error!("Sender not found");
+                                    dbg!("map addr (remove) =", (&*waiting_callers as *const _));
+                                    dbg!(&waiting_callers);
+                                    dbg!(&command_response);
+                                    if let Some(waiting_caller) =
+                                        waiting_callers.remove(command_response.1.as_str())
+                                    {
+                                        debug!(
+                                            "Received response for {}: {}",
+                                            command_response.1.as_str(),
+                                            command_response.0
+                                        );
+                                        waiting_caller
+                                            .send(command_response.0)
+                                            .expect("Command could not be delivered");
+                                    } else {
+                                        error!("Sender not found");
+                                    }
                                 }
                             }
                         }
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                    },
+                    Err(_) => {
+                        error!("Could not create inbound channel");
                     }
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
             }
         })
@@ -179,7 +178,7 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
             command,
             String::from(&self.service_id),
             self.service_instance_id,
-        );
+        )?;
         let (tx, rx) = channel();
 
         {
@@ -202,18 +201,19 @@ impl<'a, T: InboundChannel + Send + Sync + 'static> CommandServiceClient<T> {
         &mut self,
         command: &C,
         command_channel: &mut (dyn OutboundChannel + Send + Sync),
-    ) {
+    ) -> Result<()> {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(
             &command_id,
             command,
             String::from(&self.service_id),
             self.service_instance_id,
-        );
+        )?;
         command_channel.send(
             command.get_subject().as_bytes().to_vec(),
             serialized_command,
         );
+        Ok(())
     }
 
     fn read_response(command_response_channel: &mut Box<T>) -> Option<(CommandResponse, String)> {
@@ -252,15 +252,14 @@ pub struct CommandServiceServer<'c> {
 }
 
 impl MessageConsumer for CommandServiceServer<'_> {
-    fn consume(&self, message: &[u8]) {
-        let command_response = handle_command(&message, &self.command_store, &self.event_producer);
+    fn consume(&self, message: &[u8]) -> Result<()> {
+        let command_response = handle_command(&message, &self.command_store, &self.event_producer)?;
         match command_response {
-            None => {
-                error!("No command response")
-            }
+            None => Err(Error::Generic("No command response found".into())),
             Some(command_response) => {
                 self.command_response_channel
                     .send("".as_bytes().to_vec(), command_response);
+                Ok(())
             }
         }
     }
@@ -294,6 +293,7 @@ mod tests {
     };
     use crate::cqrs::{CommandServiceClient, CommandServiceServer, CqrsEventProducer, Event};
     use tokio::sync::oneshot;
+    use tokio::sync::oneshot::error::RecvError;
     use tokio::sync::oneshot::{Receiver, Sender};
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -404,7 +404,7 @@ mod tests {
         command_accessor: &mut CommandAccessor,
         event_producer: &dyn EventProducer,
     ) -> CommandResponse {
-        let command: Box<TestCreateUserCommand> = command_accessor.get_command();
+        let command: Box<TestCreateUserCommand> = command_accessor.get_command().unwrap();
 
         assert_eq!(command.user_id, "user_id");
         assert_eq!(command.name, "user_name");
@@ -452,20 +452,16 @@ mod tests {
             let command_service_server =
                 CommandServiceServer::new(&command_store, &mut event_producer, &outbound_channel);
 
-            match command_receiver.await {
-                Ok(k) => command_service_server.consume(k.as_slice()),
-                Err(_) => {
-                    assert!(false);
-                }
-            }
+            let result = command_receiver.await.unwrap();
+            command_service_server.consume(result.as_slice())
         });
 
         let mut command_service_client = CommandServiceClient::new(
             "COMMAND-CLIENT",
             Arc::new(tokio::sync::Mutex::new(Some(Box::new(|_config| {
-                return Box::new(TokioInboundChannel {
+                return Ok(Box::new(TokioInboundChannel {
                     receiver: Some(response_receiver),
-                });
+                }));
             })))),
             Box::new(TokioOutboundChannel::new(command_sender)),
         );

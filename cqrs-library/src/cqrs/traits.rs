@@ -1,3 +1,5 @@
+use crate::cqrs::messages::CommandResponseResult;
+use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -13,7 +15,7 @@ pub trait Event: Debug {
 }
 
 pub trait EventProducer {
-    fn produce(&self, event: &dyn Event);
+    fn produce(&self, event: &dyn Event) -> Result<()>;
 }
 
 pub trait OutboundChannel: Send + Sync {
@@ -25,7 +27,7 @@ pub trait InboundChannel {
 }
 
 pub trait MessageConsumer {
-    fn consume(&self, message: &[u8]);
+    fn consume(&self, message: &[u8]) -> Result<()>;
 }
 
 pub trait Command<'de>: Deserialize<'de> + Serialize {

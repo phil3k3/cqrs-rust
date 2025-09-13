@@ -6,3 +6,9 @@ pub enum Error {
     #[error(transparent)]
     Kafka(#[from] rdkafka::error::KafkaError),
 }
+
+impl From<Error> for cqrs_library::error::Error {
+    fn from(value: Error) -> Self {
+        cqrs_library::error::Error::Generic(value.to_string())
+    }
+}

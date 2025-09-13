@@ -14,3 +14,4 @@ env_logger = { workspace = true }
 tokio = { workspace = true }
 typetag = { workspace = true }
 config = { workspace = true }
+thiserror = { workspace = true }

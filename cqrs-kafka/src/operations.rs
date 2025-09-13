@@ -24,23 +24,39 @@ impl ConsumerContext for CustomContext {
 
 type LoggingStreamingConsumer = StreamConsumer<CustomContext>;
 
-pub fn create_consumer(
+pub fn create_streaming_consumer(
     bootstrap_server: String,
     service_id: String,
 ) -> Result<LoggingStreamingConsumer> {
+    let config = create_basic_config(&bootstrap_server, &service_id);
+    config
+        .create_with_context(CustomContext {})
+        .map_err(|x| x.into())
+}
+
+type LoggingConsumer = BaseConsumer<CustomContext>;
+
+pub fn create_basic_consumer(
+    bootstrap_server: String,
+    service_id: String,
+) -> Result<LoggingConsumer> {
+    let config = create_basic_config(&bootstrap_server, &service_id);
+    config
+        .create_with_context(CustomContext {})
+        .map_err(|x| x.into())
+}
+
+
+fn create_basic_config(bootstrap_server: &String, service_id: &String) -> ClientConfig {
     let mut config = ClientConfig::new();
     config
         .set("group.id", format!("{}-consumer", &service_id))
-        .set("bootstrap.servers", &bootstrap_server)
+        .set("bootstrap.servers", bootstrap_server)
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "true")
         .set("isolation.level", "read_uncommitted")
         .set("auto.offset.reset", "earliest")
         .set("debug", "consumer,cgrp,topic,fetch");
-
-    // all nodes of the same service are in a group and will get some partitions assigned
     config.set_log_level(RDKafkaLogLevel::Debug);
     config
-        .create_with_context(CustomContext {})
-        .map_err(|x| x.into())
 }
