@@ -1,8 +1,8 @@
+use crate::prelude::*;
 use cqrs_library::cqrs::traits::OutboundChannel;
 use log::{error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::config::RDKafkaLogLevel;
-use rdkafka::error::KafkaError;
 use rdkafka::producer::{BaseRecord, DeliveryResult, Producer, ProducerContext, ThreadedProducer};
 use rdkafka::{ClientConfig, ClientContext, Message};
 use std::time::Duration;
@@ -45,34 +45,36 @@ impl ProducerContext for ProducerCallbackLogger {
     }
 }
 
-fn create_producer(
-    bootstrap_server: String,
-) -> Result<ThreadedProducer<ProducerCallbackLogger>, KafkaError> {
+fn create_producer(bootstrap_server: String) -> Result<ThreadedProducer<ProducerCallbackLogger>> {
     let mut config = ClientConfig::new();
     config
         .set("bootstrap.servers", bootstrap_server)
         .set("message.timeout.ms", "5000")
         .set("debug", "broker,topic,msg");
     config.set_log_level(RDKafkaLogLevel::Debug);
-    config.create_with_context(ProducerCallbackLogger {})
+    config
+        .create_with_context(ProducerCallbackLogger {})
+        .map_err(|x| x.into())
 }
 
-fn create_admin_client(
-    bootstrap_server: String,
-) -> Result<AdminClient<ProducerCallbackLogger>, KafkaError> {
+fn create_admin_client(bootstrap_server: String) -> Result<AdminClient<ProducerCallbackLogger>> {
     let mut config = ClientConfig::new();
     config.set("bootstrap.servers", bootstrap_server);
     config.set_log_level(RDKafkaLogLevel::Debug);
-    config.create_with_context(ProducerCallbackLogger {})
+    config
+        .create_with_context(ProducerCallbackLogger {})
+        .map_err(|x| x.into())
 }
 
 impl KafkaOutboundChannel {
-    pub fn new(topic: &str, bootstrap_server: &str) -> KafkaOutboundChannel {
-        KafkaOutboundChannel {
+    pub fn new(topic: &str, bootstrap_server: &str) -> Result<KafkaOutboundChannel> {
+        let producer = create_producer(bootstrap_server.to_string())?;
+        let admin_client = create_admin_client(bootstrap_server.to_string())?;
+        Ok(KafkaOutboundChannel {
             topic: topic.to_owned(),
-            producer: create_producer(bootstrap_server.to_string()).unwrap(),
-            admin_client: create_admin_client(bootstrap_server.to_string()).unwrap(),
-        }
+            producer,
+            admin_client,
+        })
     }
 
     pub async fn create_topic(&self, topic: &str) {

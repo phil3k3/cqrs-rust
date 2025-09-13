@@ -1,7 +1,7 @@
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 use crate::cqrs::messages::CommandResponseResult;
 use crate::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[typetag::serde(tag = "type")]
 pub trait Event: Debug {
@@ -15,7 +15,7 @@ pub trait Event: Debug {
 }
 
 pub trait EventProducer {
-    fn produce(&self, event: &dyn Event) -> Result<()> ;
+    fn produce(&self, event: &dyn Event) -> Result<()>;
 }
 
 pub trait OutboundChannel: Send + Sync {

@@ -2,15 +2,19 @@ use crate::cqrs::command::{CommandAccessor, CommandStore};
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
 use crate::cqrs::traits::{Command, Event};
 use crate::cqrs::CqrsEventProducer;
+use crate::prelude::*;
 use chrono::Utc;
 use cqrs_messages::cqrs::messages::{
     CommandEnvelopeProto, CommandResponseEnvelopeProto, DomainEventEnvelopeProto,
 };
 use prost::Message;
 use uuid::Uuid;
-use crate::prelude::*;
 
-pub fn serialize_event_to_protobuf(event: &dyn Event, service_id: &str, event_id: &str) -> Result<Vec<u8>> {
+pub fn serialize_event_to_protobuf(
+    event: &dyn Event,
+    service_id: &str,
+    event_id: &str,
+) -> Result<Vec<u8>> {
     let serialized_event = serde_json::to_vec(&event)?;
     let event_id = String::from(event_id);
     let event_envelope = DomainEventEnvelopeProto {
@@ -84,8 +88,7 @@ pub fn serialize_command_response_to_protobuf(
                 entity_id: command.subject.to_owned(),
                 result: command_response.to_string(),
             };
-            let command_response_serialized =
-                serde_json::to_string(&command_response_result)?;
+            let command_response_serialized = serde_json::to_string(&command_response_result)?;
             let response_envelope = CommandResponseEnvelopeProto {
                 transaction_id: Uuid::new_v4().to_string(),
                 command_id: String::from(command_id),

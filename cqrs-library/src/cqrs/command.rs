@@ -57,15 +57,14 @@ impl<'a> CommandStore {
     ) -> CommandServerResult {
         let option = self.command_handlers.get(command_type);
         if let Some(result) = option {
-            let command_response =
-                result(command_accessor, event_producer);
+            let command_response = result(command_accessor, event_producer);
             CommandServerResult {
                 command_response,
                 service_id: self.service_id.to_owned(),
             }
         } else {
             CommandServerResult {
-                command_response: CommandResponse::NotFound ,
+                command_response: CommandResponse::NotFound,
                 service_id: self.service_id.to_owned(),
             }
         }

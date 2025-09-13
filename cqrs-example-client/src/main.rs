@@ -1,5 +1,5 @@
-mod prelude;
 mod error;
+mod prelude;
 
 use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use config::Config;
@@ -95,13 +95,14 @@ async fn post_user(
     }
 }
 
-fn create_channel(settings: Config) -> Result<Box<KafkaInboundChannel>> {
+fn create_channel(settings: Config) -> cqrs_library::prelude::Result<Box<KafkaInboundChannel>> {
     KafkaInboundChannel::new(
         &settings.get_string("service_id").unwrap(),
         &[&settings.get_string("response_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-    ).map_err(|x| x.into())
-        .map(|x| Box::new(x))
+    )
+    .map_err(|x| x.into())
+    .map(|x| Box::new(x))
 }
 
 #[tokio::main]
@@ -145,7 +146,8 @@ async fn main() -> io::Result<()> {
         let kafka_command_channel = KafkaOutboundChannel::new(
             &settings_inner.get_string("command_topic").unwrap(),
             &settings_inner.get_string("bootstrap_server").unwrap(),
-        );
+        )
+        .expect("Could not create kafka command channel");
 
         let mutex = Mutex::new(CommandServiceClient::new(
             &settings_inner.get_string("service_id").unwrap(),

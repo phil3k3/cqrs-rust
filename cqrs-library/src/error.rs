@@ -1,4 +1,5 @@
 use prost::DecodeError;
+use prost::EncodeError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -9,11 +10,11 @@ pub enum Error {
     Tokio(#[from] tokio::sync::oneshot::error::RecvError),
 
     #[error(transparent)]
-    SerdeError(#[from] DecodeError),
+    DecodeError(#[from] DecodeError),
 
     #[error(transparent)]
-    SerdeError2(#[from] serde_json::error::Error),
+    EncodeError(#[from] EncodeError),
 
     #[error(transparent)]
-    SerdeError3(#[from] prost::EncodeError),
+    SerdeError(#[from] serde_json::error::Error),
 }

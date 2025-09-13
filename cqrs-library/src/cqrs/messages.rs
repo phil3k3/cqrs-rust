@@ -22,7 +22,7 @@ pub struct CommandResponseResult {
 pub enum CommandResponse {
     Ok,
     Error,
-    NotFound
+    NotFound,
 }
 
 impl Display for CommandResponse {

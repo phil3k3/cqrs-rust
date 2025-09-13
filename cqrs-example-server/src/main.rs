@@ -1,5 +1,5 @@
-mod prelude;
 mod error;
+mod prelude;
 
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
@@ -8,7 +8,7 @@ use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
 use cqrs_library::cqrs::messages::CommandResponse;
 use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
 use cqrs_library::cqrs::{CommandServiceServer, CqrsEventProducer};
-use log::{debug, error, info};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -18,8 +18,8 @@ fn handle_create_user(
     command_accessor: &mut CommandAccessor,
     event_producer: &dyn EventProducer,
 ) -> CommandResponse {
-    let command: Result<Box<TestCreateUserCommand>> = command_accessor.get_command()
-        .map_err(|x| x.into());
+    let command: Result<Box<TestCreateUserCommand>> =
+        command_accessor.get_command().map_err(|x| x.into());
 
     match command {
         Ok(command) => {
@@ -30,9 +30,7 @@ fn handle_create_user(
             };
             let result = event_producer.produce(&event);
             match result {
-                Ok(_) => {
-                    CommandResponse::Ok
-                }
+                Ok(_) => CommandResponse::Ok,
                 Err(error) => {
                     error!("Error processing command: {}", error);
                     CommandResponse::Error
@@ -44,8 +42,6 @@ fn handle_create_user(
             CommandResponse::Error
         }
     }
-
-
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -98,7 +94,8 @@ async fn main() {
     let command_response_channel = KafkaOutboundChannel::new(
         &settings.get_string("response_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap(),
-    );
+    )
+    .expect("Failed to create command response channel");
 
     info!("Creating topics");
     command_response_channel
@@ -117,7 +114,8 @@ async fn main() {
     let event_channel = KafkaOutboundChannel::new(
         &settings.get_string("events_topic").unwrap(),
         &settings.get_string("bootstrap_server").unwrap(),
-    );
+    )
+    .expect("Failed to create event channel");
 
     let mut event_producer = CqrsEventProducer::new("COMMAND-SERVER", Box::new(event_channel));
 

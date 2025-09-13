@@ -7,7 +7,6 @@ use rdkafka::Message;
 use std::sync::Arc;
 use std::time::Duration;
 
-
 pub struct KafkaInboundChannel {
     consumer: BaseConsumer<CustomContext>,
 }
@@ -18,14 +17,13 @@ pub struct StreamKafkaInboundChannel<T: MessageConsumer> {
 }
 
 impl KafkaInboundChannel {
-    pub fn new(service_id: &str, topics: &[&str], bootstrap_server: &str) -> Result<KafkaInboundChannel> {
-        let consumer = create_basic_consumer(
-            bootstrap_server.to_string(),
-            service_id.to_string(),
-        )?;
-        let channel = KafkaInboundChannel {
-            consumer
-        };
+    pub fn new(
+        service_id: &str,
+        topics: &[&str],
+        bootstrap_server: &str,
+    ) -> Result<KafkaInboundChannel> {
+        let consumer = create_basic_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+        let channel = KafkaInboundChannel { consumer };
         channel
             .consumer
             .subscribe(&topics.to_vec())
@@ -55,7 +53,8 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         bootstrap_server: &str,
         message_consumer: T,
     ) -> Result<StreamKafkaInboundChannel<T>> {
-        let consumer = create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+        let consumer =
+            create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string())?;
         let channel = StreamKafkaInboundChannel {
             consumer,
             message_consumer: Arc::new(message_consumer),
@@ -72,7 +71,12 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
                 let consumer = consumer.clone();
                 async move {
                     if let Some(message) = borrowed_message.payload() {
-                        consumer.consume(message);
+                        let result = consumer.consume(message);
+                        if let Err(e) = result {
+                            // TODO this skips over erroneous messages, we might want to crash loop until 
+                            // they are successfully consumed to preserve data integrity
+                            eprintln!("{:?}", e);
+                        }
                     }
                     Ok(())
                 }
