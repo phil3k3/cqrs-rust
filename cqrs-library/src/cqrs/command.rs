@@ -14,7 +14,7 @@ pub struct CommandAccessor<'a> {
     pub command_metadata: Option<CommandMetadata>,
 }
 impl<'a> CommandAccessor<'a> {
-    pub fn new(serialized_command: &'a Vec<u8>, command_id: String) -> CommandAccessor {
+    pub fn new(serialized_command: &'a Vec<u8>, command_id: String) -> CommandAccessor<'a> {
         CommandAccessor {
             serialized_command,
             command_id,

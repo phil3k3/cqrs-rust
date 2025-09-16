@@ -23,11 +23,12 @@ fn handle_create_user(
 
     match command {
         Ok(command) => {
-            info!("Creating user {} with id {}", command.name, command.user_id);
+            info!("===== Received command to create user {:?}", command);
             let event = UserCreatedEvent {
                 user_id: command.user_id,
                 name: command.name,
             };
+            info!("===== Producing event as user was created {:?}", event);
             let result = event_producer.produce(&event);
             match result {
                 Ok(_) => CommandResponse::Ok,
