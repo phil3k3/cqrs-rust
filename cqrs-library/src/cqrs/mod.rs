@@ -5,19 +5,19 @@ pub mod traits;
 pub mod messages;
 mod operations;
 use crate::cqrs::command::CommandStore;
-use crate::cqrs::messages::{CommandResponse};
-use crate::cqrs::operations::{decode_message, handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf};
-use crate::cqrs::traits::{
-    Command, Event, EventProducer, MessageConsumer, OutboundChannel,
+use crate::cqrs::messages::CommandResponse;
+use crate::cqrs::operations::{
+    decode_message, handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf,
 };
-use cqrs_messages::cqrs::messages::{DomainEventEnvelopeProto};
-use log::{debug};
+use crate::cqrs::traits::{Command, Event, EventProducer, MessageConsumer, OutboundChannel};
+use async_trait::async_trait;
+use cqrs_messages::cqrs::messages::DomainEventEnvelopeProto;
+use dashmap::DashMap;
+use log::debug;
 use prost::Message;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use async_trait::async_trait;
-use dashmap::DashMap;
 use tokio::sync::oneshot::{channel, Sender};
 use uuid::Uuid;
 
@@ -116,7 +116,6 @@ impl<'a> CommandServiceClient {
         }
     }
 
-
     pub async fn send_command<C: Command<'a> + ?Sized>(
         &self,
         command: &C,
@@ -130,7 +129,8 @@ impl<'a> CommandServiceClient {
         )?;
         let (tx, rx) = channel();
 
-        self.pending_responses_senders.insert(command_id.to_owned(), tx);
+        self.pending_responses_senders
+            .insert(command_id.to_owned(), tx);
 
         self.command_channel.send(
             command.get_subject().as_bytes().to_vec(),
@@ -161,23 +161,26 @@ impl<'a> CommandServiceClient {
 
     async fn consume_message(&self, message: Vec<u8>) -> Result<()> {
         let command_response = decode_message(message)?;
-        if let Some(waiting_caller) = self.pending_responses_senders.remove(command_response.1.as_str())
+        if let Some(waiting_caller) = self
+            .pending_responses_senders
+            .remove(command_response.1.as_str())
         {
             debug!(
-                                            "Received response for {}: {}",
-                                            command_response.1.as_str(),
-                                            command_response.0
-                                        );
-            waiting_caller.1
+                "Received response for {}: {}",
+                command_response.1.as_str(),
+                command_response.0
+            );
+            waiting_caller
+                .1
                 .send(command_response.0)
                 .expect("Command could not be delivered");
             Ok(())
         } else {
-            Err(Error::Generic(String::from("Command response for unknown command")))
+            Err(Error::Generic(String::from(
+                "Command response for unknown command",
+            )))
         }
     }
-
-
 }
 
 pub struct CommandServiceServer<'c> {
@@ -389,7 +392,10 @@ mod tests {
                 CommandServiceServer::new(&command_store, &mut event_producer, &outbound_channel);
 
             let result = command_receiver.await.unwrap();
-            command_service_server.consume(result.as_slice()).await.unwrap();
+            command_service_server
+                .consume(result.as_slice())
+                .await
+                .unwrap();
         });
 
         let command_service_client = Arc::new(CommandServiceClient::new(

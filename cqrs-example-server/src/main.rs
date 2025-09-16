@@ -1,6 +1,7 @@
 mod error;
 mod prelude;
 
+use crate::prelude::*;
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 use cqrs_kafka::outbound::KafkaOutboundChannel;
@@ -12,7 +13,6 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
-use crate::prelude::*;
 
 fn handle_create_user(
     command_accessor: &mut CommandAccessor,
@@ -130,7 +130,7 @@ async fn main() {
         &[&settings.get_string("command_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
         Arc::new(command_service_server),
-        false
+        false,
     )
     .expect("Failed to create command channel");
 

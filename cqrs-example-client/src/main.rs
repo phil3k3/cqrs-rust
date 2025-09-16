@@ -1,4 +1,3 @@
-
 use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use config::Config;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
@@ -11,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::{env, io};
 use uuid::Uuid;
-
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
@@ -80,11 +78,11 @@ async fn post_user(
                     .body("Failed to process command, check server logs")
             }
         }
-        Err(_) => HttpResponse::InternalServerError()
-            .body("Failed to process command, check server logs"),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to process command, check server logs")
+        }
     }
 }
-
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -113,7 +111,7 @@ async fn main() -> io::Result<()> {
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
             arc.clone(),
-            false
+            false,
         )
         .expect("Could not create kafka event listener channel");
 
@@ -128,7 +126,7 @@ async fn main() -> io::Result<()> {
         &settings_inner.get_string("command_topic").unwrap(),
         &settings_inner.get_string("bootstrap_server").unwrap(),
     )
-        .expect("Could not create kafka command channel");
+    .expect("Could not create kafka command channel");
     let client = CommandServiceClient::new(
         &settings_inner.get_string("service_id").unwrap(),
         Box::new(kafka_command_channel),
@@ -146,8 +144,9 @@ async fn main() -> io::Result<()> {
             &[&settings.get_string("response_topic").unwrap()],
             &settings.get_string("bootstrap_server").unwrap(),
             client_for_task,
-            false
-        ).expect("Failed to create command channel");
+            false,
+        )
+        .expect("Failed to create command channel");
 
         command_channel.consume_async_blocking().await;
     });
@@ -155,7 +154,9 @@ async fn main() -> io::Result<()> {
     let command_service_client = command_service_client.clone();
     HttpServer::new(move || {
         let command_service_client = command_service_client.clone();
-        let command_service_client_data = web::Data::new(AppState { client: command_service_client });
+        let command_service_client_data = web::Data::new(AppState {
+            client: command_service_client,
+        });
         App::new()
             .app_data(command_service_client_data)
             .service(post_user)

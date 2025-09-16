@@ -21,9 +21,13 @@ impl KafkaInboundChannel {
         service_id: &str,
         topics: &[&str],
         bootstrap_server: &str,
-        default_reset: bool
+        default_reset: bool,
     ) -> Result<KafkaInboundChannel> {
-        let consumer = create_basic_consumer(bootstrap_server.to_string(), service_id.to_string(), default_reset)?;
+        let consumer = create_basic_consumer(
+            bootstrap_server.to_string(),
+            service_id.to_string(),
+            default_reset,
+        )?;
         let channel = KafkaInboundChannel { consumer };
         channel
             .consumer
@@ -53,10 +57,13 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         topics: &[&str],
         bootstrap_server: &str,
         message_consumer: Arc<T>,
-        default_reset: bool
+        default_reset: bool,
     ) -> Result<StreamKafkaInboundChannel<T>> {
-        let consumer =
-            create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string(), default_reset)?;
+        let consumer = create_streaming_consumer(
+            bootstrap_server.to_string(),
+            service_id.to_string(),
+            default_reset,
+        )?;
         let channel = StreamKafkaInboundChannel {
             consumer,
             message_consumer,
