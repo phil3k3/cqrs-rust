@@ -86,7 +86,7 @@ pub fn serialize_command_response_to_protobuf(
         Some(command) => {
             let command_response_result = CommandResponseResult {
                 entity_id: command.subject.to_owned(),
-                result: command_response.to_string(),
+                result: command_response,
             };
             let command_response_serialized = serde_json::to_string(&command_response_result)?;
             let response_envelope = CommandResponseEnvelopeProto {
@@ -111,4 +111,10 @@ fn serialize_protobuf<M: Message + Sized>(envelope: &M) -> Result<Vec<u8>> {
     buf.reserve(envelope.encoded_len());
     envelope.encode(&mut buf)?;
     Ok(buf)
+}
+
+pub fn decode_message(message: Vec<u8>) -> Result<(CommandResponse, String)> {
+    let command_response = CommandResponseEnvelopeProto::decode(message.as_slice())?;
+    let command_response_result = serde_json::from_slice::<CommandResponseResult>(&command_response.response)?;
+    Ok((command_response_result.result, command_response.command_id))
 }

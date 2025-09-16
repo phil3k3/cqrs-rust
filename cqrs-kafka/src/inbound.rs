@@ -21,8 +21,9 @@ impl KafkaInboundChannel {
         service_id: &str,
         topics: &[&str],
         bootstrap_server: &str,
+        default_reset: bool
     ) -> Result<KafkaInboundChannel> {
-        let consumer = create_basic_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+        let consumer = create_basic_consumer(bootstrap_server.to_string(), service_id.to_string(), default_reset)?;
         let channel = KafkaInboundChannel { consumer };
         channel
             .consumer
@@ -51,13 +52,14 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         service_id: &str,
         topics: &[&str],
         bootstrap_server: &str,
-        message_consumer: T,
+        message_consumer: Arc<T>,
+        default_reset: bool
     ) -> Result<StreamKafkaInboundChannel<T>> {
         let consumer =
-            create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string())?;
+            create_streaming_consumer(bootstrap_server.to_string(), service_id.to_string(), default_reset)?;
         let channel = StreamKafkaInboundChannel {
             consumer,
-            message_consumer: Arc::new(message_consumer),
+            message_consumer,
         };
         channel.consumer.subscribe(&topics.to_vec())?;
         Ok(channel)
@@ -71,9 +73,9 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
                 let consumer = consumer.clone();
                 async move {
                     if let Some(message) = borrowed_message.payload() {
-                        let result = consumer.consume(message);
+                        let result = consumer.consume(message).await;
                         if let Err(e) = result {
-                            // TODO this skips over erroneous messages, we might want to crash loop until 
+                            // TODO this skips over erroneous messages, we might want to crash loop until
                             // they are successfully consumed to preserve data integrity
                             eprintln!("{:?}", e);
                         }

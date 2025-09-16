@@ -1,20 +1,17 @@
-mod error;
-mod prelude;
 
 use actix_web::{post, web, App, HttpResponse, HttpServer, Responder};
 use config::Config;
-use cqrs_kafka::inbound::{KafkaInboundChannel, StreamKafkaInboundChannel};
+use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 use cqrs_kafka::outbound::KafkaOutboundChannel;
 use cqrs_library::cqrs::messages::CommandResponse;
 use cqrs_library::cqrs::traits::{Command, Event};
 use cqrs_library::cqrs::{CommandServiceClient, EventListener};
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{env, io};
 use uuid::Uuid;
 
-use crate::prelude::*;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct CreateUserCommand {
@@ -23,7 +20,7 @@ struct CreateUserCommand {
 }
 
 struct AppState {
-    client: Mutex<CommandServiceClient<KafkaInboundChannel>>,
+    client: Arc<CommandServiceClient>,
 }
 
 impl Command<'_> for CreateUserCommand {
@@ -73,37 +70,21 @@ async fn post_user(
     dbg!(&command);
     info!("Creating user {}", command.name);
 
-    match command_service_client.client.lock() {
-        Ok(mut lock_result) => {
-            let result = lock_result.send_command(&command).await;
-            match result {
-                Ok(result) => {
-                    if result == CommandResponse::Ok {
-                        HttpResponse::Ok().body(command.user_id)
-                    } else {
-                        HttpResponse::InternalServerError()
-                            .body("Failed to process command, check server logs")
-                    }
-                }
-                Err(_) => HttpResponse::InternalServerError()
-                    .body("Failed to process command, check server logs"),
+    let result = command_service_client.client.send_command(&command).await;
+    match result {
+        Ok(result) => {
+            if result == CommandResponse::Ok {
+                HttpResponse::Ok().body(command.user_id)
+            } else {
+                HttpResponse::InternalServerError()
+                    .body("Failed to process command, check server logs")
             }
         }
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to process command, check server logs")
-        }
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to process command, check server logs"),
     }
 }
 
-fn create_channel(settings: Config) -> cqrs_library::prelude::Result<Box<KafkaInboundChannel>> {
-    KafkaInboundChannel::new(
-        &settings.get_string("service_id").unwrap(),
-        &[&settings.get_string("response_topic").unwrap()],
-        &settings.get_string("bootstrap_server").unwrap(),
-    )
-    .map_err(|x| x.into())
-    .map(|x| Box::new(x))
-}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -126,43 +107,55 @@ async fn main() -> io::Result<()> {
 
         let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
+        let arc = Arc::new(event_listener);
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
-            event_listener,
+            arc.clone(),
+            false
         )
         .expect("Could not create kafka event listener channel");
 
         kafka_event_listener_channel.consume_async_blocking().await;
     });
 
-    HttpServer::new(|| {
-        let settings_inner = Config::builder()
+    let settings_inner = Config::builder()
+        .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
+        .build()
+        .unwrap();
+    let kafka_command_channel = KafkaOutboundChannel::new(
+        &settings_inner.get_string("command_topic").unwrap(),
+        &settings_inner.get_string("bootstrap_server").unwrap(),
+    )
+        .expect("Could not create kafka command channel");
+    let client = CommandServiceClient::new(
+        &settings_inner.get_string("service_id").unwrap(),
+        Box::new(kafka_command_channel),
+    );
+    let command_service_client = Arc::new(client);
+
+    let client_for_task = Arc::clone(&command_service_client);
+    tokio::spawn(async move {
+        let settings = Config::builder()
             .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
             .build()
             .unwrap();
+        let command_channel = StreamKafkaInboundChannel::new(
+            "COMMAND-CLIENT",
+            &[&settings.get_string("response_topic").unwrap()],
+            &settings.get_string("bootstrap_server").unwrap(),
+            client_for_task,
+            false
+        ).expect("Failed to create command channel");
 
-        let kafka_command_channel = KafkaOutboundChannel::new(
-            &settings_inner.get_string("command_topic").unwrap(),
-            &settings_inner.get_string("bootstrap_server").unwrap(),
-        )
-        .expect("Could not create kafka command channel");
+        command_channel.consume_async_blocking().await;
+    });
 
-        let mutex = Mutex::new(CommandServiceClient::new(
-            &settings_inner.get_string("service_id").unwrap(),
-            Arc::new(tokio::sync::Mutex::new(Some(Box::new(create_channel)))),
-            Box::new(kafka_command_channel),
-        ));
-        let command_service_client_data = web::Data::new(AppState { client: mutex });
-        match command_service_client_data.client.lock() {
-            Ok(mut guard) => {
-                guard.start(settings_inner);
-            }
-            Err(_) => {
-                panic!("Could not lock mutex");
-            }
-        }
+    let command_service_client = command_service_client.clone();
+    HttpServer::new(move || {
+        let command_service_client = command_service_client.clone();
+        let command_service_client_data = web::Data::new(AppState { client: command_service_client });
         App::new()
             .app_data(command_service_client_data)
             .service(post_user)

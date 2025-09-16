@@ -11,7 +11,7 @@ use cqrs_library::cqrs::{CommandServiceServer, CqrsEventProducer};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
-
+use std::sync::Arc;
 use crate::prelude::*;
 
 fn handle_create_user(
@@ -129,7 +129,8 @@ async fn main() {
         "COMMAND-SERVER",
         &[&settings.get_string("command_topic").unwrap()],
         &settings.get_string("bootstrap_server").unwrap(),
-        command_service_server,
+        Arc::new(command_service_server),
+        false
     )
     .expect("Failed to create command channel");
 
