@@ -48,7 +48,7 @@ impl Event for UserCreatedEvent {
 }
 
 fn handle_event(event: &dyn Event) {
-    info!("{:?}", event);
+    info!("===== Received event {:?}", event);
 }
 
 #[derive(Deserialize)]
@@ -65,8 +65,7 @@ async fn post_user(
         user_id: Uuid::new_v4().to_string(),
         name: payload.name.clone(),
     };
-    dbg!(&command);
-    info!("Creating user {}", command.name);
+    info!("===== Sending command to create user '{:?}'", command);
 
     let result = command_service_client.client.send_command(&command).await;
     match result {
