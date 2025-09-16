@@ -1,7 +1,7 @@
 use crate::prelude::*;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use async_trait::async_trait;
 
 #[typetag::serde(tag = "type")]
 pub trait Event: Debug {

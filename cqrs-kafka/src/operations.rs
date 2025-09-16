@@ -48,8 +48,11 @@ pub fn create_basic_consumer(
         .map_err(|x| x.into())
 }
 
-
-fn create_basic_config(bootstrap_server: &String, service_id: &String, default_reset: bool) -> ClientConfig {
+fn create_basic_config(
+    bootstrap_server: &String,
+    service_id: &String,
+    default_reset: bool,
+) -> ClientConfig {
     let mut config = ClientConfig::new();
     config
         .set("group.id", format!("{}-consumer", &service_id))
@@ -57,11 +60,10 @@ fn create_basic_config(bootstrap_server: &String, service_id: &String, default_r
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "true")
         .set("isolation.level", "read_uncommitted")
-        .set("auto.offset.reset", if default_reset {
-            "earliest"
-        } else {
-            "latest"
-        })
+        .set(
+            "auto.offset.reset",
+            if default_reset { "earliest" } else { "latest" },
+        )
         .set("debug", "consumer,cgrp,topic,fetch");
     config.set_log_level(RDKafkaLogLevel::Debug);
     config
