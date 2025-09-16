@@ -15,10 +15,10 @@ pub struct CommandServerResult {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CommandResponseResult {
     pub(crate) entity_id: String,
-    pub(crate) result: String,
+    pub(crate) result: CommandResponse,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Deserialize, Serialize)]
 pub enum CommandResponse {
     Ok,
     Error,

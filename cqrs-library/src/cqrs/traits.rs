@@ -1,7 +1,7 @@
-use crate::cqrs::messages::CommandResponseResult;
 use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use async_trait::async_trait;
 
 #[typetag::serde(tag = "type")]
 pub trait Event: Debug {
@@ -26,8 +26,13 @@ pub trait InboundChannel {
     fn consume(&mut self) -> Option<Vec<u8>>;
 }
 
+pub trait StreamInboundChannel {
+    fn consume_async_blocking(&self) -> Result<()>;
+}
+
+#[async_trait]
 pub trait MessageConsumer {
-    fn consume(&self, message: &[u8]) -> Result<()>;
+    async fn consume(&self, message: &[u8]) -> Result<()>;
 }
 
 pub trait Command<'de>: Deserialize<'de> + Serialize {

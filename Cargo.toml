@@ -25,3 +25,5 @@ uuid = { version = "1.6.1", features = ["serde", "v4"] }
 chrono = "0.4"
 testcontainers = "0.25.0"
 testcontainers-modules =  { version = "0.13.0", features = ["kafka"]}
+dashmap = "6.1.0"
+async-trait = "0.1.89"
