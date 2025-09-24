@@ -39,7 +39,7 @@ mod tests {
         inbound_channel.consume();
 
         let sender = thread::spawn(move || {
-            outbound_channel.send("KEY".as_bytes().to_vec(), "MESSAGE".as_bytes().to_vec());
+            outbound_channel.send("KEY".as_bytes(), "MESSAGE".as_bytes());
         });
 
         info!("Waiting for sender");

@@ -113,8 +113,8 @@ fn serialize_protobuf<M: Message + Sized>(envelope: &M) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub fn decode_message(message: Vec<u8>) -> Result<(CommandResponse, String)> {
-    let command_response = CommandResponseEnvelopeProto::decode(message.as_slice())?;
+pub fn decode_message(message: &[u8]) -> Result<(CommandResponse, String)> {
+    let command_response = CommandResponseEnvelopeProto::decode(message)?;
     let command_response_result =
         serde_json::from_slice::<CommandResponseResult>(&command_response.response)?;
     Ok((command_response_result.result, command_response.command_id))

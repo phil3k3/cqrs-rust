@@ -60,15 +60,15 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         default_reset: bool,
     ) -> Result<StreamKafkaInboundChannel<T>> {
         let consumer = create_streaming_consumer(
-            bootstrap_server.to_string(),
-            service_id.to_string(),
+            bootstrap_server,
+            service_id,
             default_reset,
         )?;
         let channel = StreamKafkaInboundChannel {
             consumer,
             message_consumer,
         };
-        channel.consumer.subscribe(&topics.to_vec())?;
+        channel.consumer.subscribe(topics)?;
         Ok(channel)
     }
 
