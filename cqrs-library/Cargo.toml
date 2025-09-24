@@ -15,7 +15,6 @@ chrono = { workspace = true }
 log = { workspace = true }
 typetag = { workspace = true }
 tokio = { workspace = true }
-config = { workspace = true }
 env_logger ={ workspace = true }
 thiserror = { workspace = true }
 dashmap = { workspace = true }

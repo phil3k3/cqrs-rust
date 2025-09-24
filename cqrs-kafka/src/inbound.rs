@@ -38,7 +38,7 @@ impl KafkaInboundChannel {
 }
 
 impl InboundChannel for KafkaInboundChannel {
-    fn consume(&mut self) -> Option<Vec<u8>> {
+    fn consume(&self) -> Option<Vec<u8>> {
         self.consumer
             .poll(Duration::from_secs(1))
             .and_then(|x| match x {
@@ -59,11 +59,7 @@ impl<T: MessageConsumer> StreamKafkaInboundChannel<T> {
         message_consumer: Arc<T>,
         default_reset: bool,
     ) -> Result<StreamKafkaInboundChannel<T>> {
-        let consumer = create_streaming_consumer(
-            bootstrap_server,
-            service_id,
-            default_reset,
-        )?;
+        let consumer = create_streaming_consumer(bootstrap_server, service_id, default_reset)?;
         let channel = StreamKafkaInboundChannel {
             consumer,
             message_consumer,

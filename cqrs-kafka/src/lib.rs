@@ -33,7 +33,7 @@ mod tests {
 
         outbound_channel.create_topic("TEST").await;
 
-        let mut inbound_channel =
+        let inbound_channel =
             KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers, true).unwrap();
 
         inbound_channel.consume();

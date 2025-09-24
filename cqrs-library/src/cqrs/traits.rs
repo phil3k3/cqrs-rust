@@ -23,7 +23,7 @@ pub trait OutboundChannel: Send + Sync {
 }
 
 pub trait InboundChannel {
-    fn consume(&mut self) -> Option<Vec<u8>>;
+    fn consume(&self) -> Option<Vec<u8>>;
 }
 
 pub trait StreamInboundChannel {
