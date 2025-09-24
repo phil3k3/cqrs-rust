@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 
 pub struct CommandMetadata {
     pub(crate) subject: String,
@@ -23,20 +22,4 @@ pub enum CommandResponse {
     Ok,
     Error,
     NotFound,
-}
-
-impl Display for CommandResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandResponse::Ok => {
-                write!(f, "Ok")
-            }
-            CommandResponse::Error => {
-                write!(f, "Error")
-            }
-            CommandResponse::NotFound => {
-                write!(f, "NotFound")
-            }
-        }
-    }
 }

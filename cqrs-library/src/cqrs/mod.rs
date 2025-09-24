@@ -141,7 +141,7 @@ impl<'a> CommandServiceClient {
     }
 
     pub fn send_command_async<C: Command<'a> + ?Sized>(
-        &mut self,
+        &self,
         command: &C,
         command_channel: &mut (dyn OutboundChannel + Send + Sync),
     ) -> Result<()> {
@@ -166,7 +166,7 @@ impl<'a> CommandServiceClient {
             .remove(command_response.1.as_str())
         {
             debug!(
-                "Received response for {}: {}",
+                "Received response for {}: {:?}",
                 command_response.1.as_str(),
                 command_response.0
             );
@@ -226,9 +226,7 @@ mod tests {
 
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
-    use crate::cqrs::traits::{
-        Command, EventProducer, MessageConsumer, OutboundChannel,
-    };
+    use crate::cqrs::traits::{Command, EventProducer, MessageConsumer, OutboundChannel};
     use crate::cqrs::{CommandServiceClient, CommandServiceServer, CqrsEventProducer, Event};
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
@@ -332,7 +330,9 @@ mod tests {
             user_id: command.user_id,
             name: command.name,
         };
-        event_producer.produce(&event);
+        event_producer
+            .produce(&event)
+            .expect("Could not produce event");
 
         CommandResponse::Ok
     }
