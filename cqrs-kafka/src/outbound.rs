@@ -93,12 +93,12 @@ impl KafkaOutboundChannel {
 }
 
 impl OutboundChannel for KafkaOutboundChannel {
-    fn send(&self, key: Vec<u8>, message: Vec<u8>) {
+    fn send(&self, key: &[u8], message: &[u8]) {
         self.producer
             .send(
                 BaseRecord::to(self.topic.as_str())
-                    .key(&key)
-                    .payload(&message),
+                    .key(key)
+                    .payload(message),
             )
             .expect("Failed to send message");
         for _ in 0..10 {

@@ -32,7 +32,7 @@ impl EventProducer for CqrsEventProducer {
     fn produce(&self, event: &dyn Event) -> Result<()> {
         let event_message = self.convert_event(event)?;
         self.event_channel
-            .send(Vec::from(event.get_id()), event_message);
+            .send(event.get_id().as_bytes(), event_message.as_slice());
         Ok(())
     }
 }
@@ -133,8 +133,8 @@ impl<'a> CommandServiceClient {
             .insert(command_id.to_owned(), tx);
 
         self.command_channel.send(
-            command.get_subject().as_bytes().to_vec(),
-            serialized_command,
+            command.get_subject().as_bytes(),
+            serialized_command.as_slice(),
         );
 
         rx.await.map_err(|x| x.into())
@@ -153,14 +153,14 @@ impl<'a> CommandServiceClient {
             self.service_instance_id,
         )?;
         command_channel.send(
-            command.get_subject().as_bytes().to_vec(),
-            serialized_command,
+            command.get_subject().as_bytes(),
+            serialized_command.as_slice(),
         );
         Ok(())
     }
 
     async fn consume_message(&self, message: Vec<u8>) -> Result<()> {
-        let command_response = decode_message(message)?;
+        let command_response = decode_message(message.as_slice())?;
         if let Some(waiting_caller) = self
             .pending_responses_senders
             .remove(command_response.1.as_str())
@@ -197,7 +197,7 @@ impl MessageConsumer for CommandServiceServer<'_> {
             None => Err(Error::Generic("No command response found".into())),
             Some(command_response) => {
                 self.command_response_channel
-                    .send("".as_bytes().to_vec(), command_response);
+                    .send("".as_bytes(), command_response.as_slice());
                 Ok(())
             }
         }
@@ -220,7 +220,6 @@ impl<'a> CommandServiceServer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use config::Config;
     use serde::{Deserialize, Serialize};
     use std::env;
     use std::sync::{Arc, Mutex};
@@ -228,11 +227,10 @@ mod tests {
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
     use crate::cqrs::traits::{
-        Command, EventProducer, InboundChannel, MessageConsumer, OutboundChannel,
+        Command, EventProducer, MessageConsumer, OutboundChannel,
     };
     use crate::cqrs::{CommandServiceClient, CommandServiceServer, CqrsEventProducer, Event};
     use tokio::sync::oneshot;
-    use tokio::sync::oneshot::error::RecvError;
     use tokio::sync::oneshot::{Receiver, Sender};
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -280,28 +278,10 @@ mod tests {
     }
 
     impl OutboundChannel for TokioOutboundChannel {
-        fn send(&self, _key: Vec<u8>, message: Vec<u8>) {
+        fn send(&self, _key: &[u8], message: &[u8]) {
             let mut guard = self.sender.lock().expect("Could not lock mutex");
             let tx = guard.take().expect("Could not take sender");
-            tx.send(message).expect("Could not send message");
-        }
-    }
-
-    struct TokioInboundChannel {
-        receiver: Option<Receiver<Vec<u8>>>,
-    }
-
-    impl InboundChannel for TokioInboundChannel {
-        fn consume(&mut self) -> Option<Vec<u8>> {
-            if let Some(mut receiver) = self.receiver.take() {
-                let result = match receiver.try_recv() {
-                    Ok(k) => Some(k),
-                    Err(_) => None,
-                };
-                result
-            } else {
-                None
-            }
+            tx.send(Vec::from(message)).expect("Could not send message");
         }
     }
 

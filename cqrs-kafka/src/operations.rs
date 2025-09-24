@@ -25,8 +25,8 @@ impl ConsumerContext for CustomContext {
 type LoggingStreamingConsumer = StreamConsumer<CustomContext>;
 
 pub fn create_streaming_consumer(
-    bootstrap_server: String,
-    service_id: String,
+    bootstrap_server: &str,
+    service_id: &str,
     default_reset: bool,
 ) -> Result<LoggingStreamingConsumer> {
     let config = create_basic_config(&bootstrap_server, &service_id, default_reset);
@@ -49,8 +49,8 @@ pub fn create_basic_consumer(
 }
 
 fn create_basic_config(
-    bootstrap_server: &String,
-    service_id: &String,
+    bootstrap_server: &str,
+    service_id: &str,
     default_reset: bool,
 ) -> ClientConfig {
     let mut config = ClientConfig::new();
