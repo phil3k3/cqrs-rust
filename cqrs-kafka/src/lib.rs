@@ -1,15 +1,42 @@
+use config::Config;
+
 pub mod error;
 pub mod inbound;
 mod operations;
 pub mod outbound;
 mod prelude;
+pub mod traits;
+
+pub struct KafkaSettings {
+    pub bootstrap_server: String,
+    pub transaction_id: String,
+    pub events_topic: String,
+    pub commands_topic: String,
+    pub command_response_topic: String,
+    pub service_id: String
+}
+
+impl From<Config> for KafkaSettings {
+    fn from(value: Config) -> Self {
+        Self {
+          bootstrap_server: value.get_string("bootstrap_server").expect("Bootstrap server must be configured"),
+          transaction_id: value.get_string("transaction_id").expect("Transaction id must be configured"),
+          events_topic: value.get_string("events_topic").expect("Events topic must be configured"),
+          command_response_topic: value.get_string("response_topic").expect("Command response topic must be configured"),
+          commands_topic: value.get_string("command_topic").expect("Commands topic must be configured"),
+          service_id: value.get_string("service_id").expect("Service id must be configured")
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use crate::inbound::KafkaInboundChannel;
-    use crate::outbound::KafkaOutboundChannel;
+    use crate::outbound::{create_admin_client, KafkaOutboundChannel};
     use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
     use log::info;
+    use rdkafka::admin::{AdminOptions, NewTopic, TopicReplication};
     use std::sync::mpsc::channel;
     use std::thread;
     use testcontainers::runners::AsyncRunner;
@@ -29,10 +56,15 @@ mod tests {
         let bootstrap_servers = format!("127.0.0.1:{}", host_port);
 
         info!("{}", bootstrap_servers);
-        let outbound_channel = KafkaOutboundChannel::new("TEST", &bootstrap_servers).unwrap();
+        let outbound_channel = KafkaOutboundChannel::new(String::from("TEST"), &bootstrap_servers).unwrap();
 
-        outbound_channel.create_topic("TEST").await;
-
+        let admin_client = create_admin_client(&bootstrap_servers).unwrap();
+        admin_client
+            .create_topics(
+                &[NewTopic::new("TEST", 1, TopicReplication::Fixed(1))],
+                &AdminOptions::new(),
+            )
+            .await.unwrap();
         let inbound_channel =
             KafkaInboundChannel::new("TEST_IN", &["TEST"], &bootstrap_servers, true).unwrap();
 

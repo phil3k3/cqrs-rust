@@ -1,7 +1,6 @@
 use crate::cqrs::command::{CommandAccessor, CommandStore};
 use crate::cqrs::messages::{CommandResponse, CommandResponseResult};
-use crate::cqrs::traits::{Command, Event};
-use crate::cqrs::CqrsEventProducer;
+use crate::cqrs::traits::{Command, Event, EventProducer};
 use crate::prelude::*;
 use chrono::Utc;
 use cqrs_messages::cqrs::messages::{
@@ -35,7 +34,7 @@ pub fn serialize_event_to_protobuf(
 pub fn handle_command(
     serialized_command: &[u8],
     command_store: &CommandStore,
-    event_producer: &CqrsEventProducer,
+    event_producer: &impl EventProducer,
 ) -> Result<Option<Vec<u8>>> {
     let result = CommandEnvelopeProto::decode(serialized_command)?;
 

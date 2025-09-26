@@ -53,7 +53,7 @@ impl<'a> CommandStore {
         &self,
         command_type: &str,
         command_accessor: &mut CommandAccessor,
-        event_producer: &'a dyn EventProducer,
+        event_producer: &'a impl EventProducer,
     ) -> CommandServerResult {
         let option = self.command_handlers.get(command_type);
         if let Some(result) = option {

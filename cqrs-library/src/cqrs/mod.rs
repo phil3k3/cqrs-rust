@@ -9,7 +9,7 @@ use crate::cqrs::messages::CommandResponse;
 use crate::cqrs::operations::{
     decode_message, handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf,
 };
-use crate::cqrs::traits::{Command, Event, EventProducer, MessageConsumer, OutboundChannel};
+use crate::cqrs::traits::{Command, CommandResponseChannel, Event, EventChannel, EventProducer, MessageConsumer, OutboundChannel};
 use async_trait::async_trait;
 use cqrs_messages::cqrs::messages::DomainEventEnvelopeProto;
 use dashmap::DashMap;
@@ -23,25 +23,25 @@ use uuid::Uuid;
 
 use crate::prelude::*;
 
-pub struct CqrsEventProducer {
+pub struct CqrsEventProducer<'c, E: EventChannel + Send> {
     service_id: String,
-    event_channel: Box<dyn OutboundChannel + Send>,
+    event_channel: &'c E
 }
 
-impl EventProducer for CqrsEventProducer {
+impl<'c, O: EventChannel + Send> EventProducer for CqrsEventProducer<'c, O> {
     fn produce(&self, event: &dyn Event) -> Result<()> {
         let event_message = self.convert_event(event)?;
         self.event_channel
-            .send(event.get_id().as_bytes(), event_message.as_slice());
+            .send_event(event.get_id().as_bytes(), event_message.as_slice())?;
         Ok(())
     }
 }
 
-impl<'e> CqrsEventProducer {
+impl<'e, E: EventChannel + Send> CqrsEventProducer<'e, E> {
     pub fn new(
         service_id: &str,
-        event_channel: Box<dyn OutboundChannel + Send>,
-    ) -> CqrsEventProducer {
+        event_channel: &'e E,
+    ) -> CqrsEventProducer<'e, E> {
         CqrsEventProducer {
             service_id: String::from(service_id),
             event_channel,
@@ -54,15 +54,15 @@ impl<'e> CqrsEventProducer {
     }
 }
 
-pub struct CommandServiceClient {
+pub struct CommandServiceClient<O: OutboundChannel + Sync + Send> {
     service_id: String,
     service_instance_id: u32,
-    command_channel: Box<dyn OutboundChannel + Sync + Send>,
+    command_channel: O,
     pending_responses_senders: Arc<DashMap<String, Sender<CommandResponse>>>,
 }
 
 #[async_trait]
-impl MessageConsumer for CommandServiceClient {
+impl<O: OutboundChannel + Sync + Send> MessageConsumer for CommandServiceClient<O> {
     async fn consume(&self, message: &[u8]) -> Result<()> {
         self.consume_message(message.to_vec()).await
     }
@@ -103,11 +103,11 @@ impl MessageConsumer for EventListener {
     }
 }
 
-impl<'a> CommandServiceClient {
+impl<'a, O: OutboundChannel + Send + Sync> CommandServiceClient<O> {
     pub fn new(
         service_id: &str,
-        command_channel: Box<dyn OutboundChannel + Sync + Send>,
-    ) -> CommandServiceClient {
+        command_channel: O,
+    ) -> CommandServiceClient<O> {
         CommandServiceClient {
             service_id: String::from(service_id),
             service_instance_id: 0u32,
@@ -143,7 +143,7 @@ impl<'a> CommandServiceClient {
     pub fn send_command_async<C: Command<'a> + ?Sized>(
         &self,
         command: &C,
-        command_channel: &mut (dyn OutboundChannel + Send + Sync),
+        command_channel: &O,
     ) -> Result<()> {
         let command_id = Uuid::new_v4().to_string();
         let serialized_command = serialize_command_to_protobuf(
@@ -183,37 +183,41 @@ impl<'a> CommandServiceClient {
     }
 }
 
-pub struct CommandServiceServer<'c> {
+pub struct CommandServiceServer<'c, CR: CommandResponseChannel + Send + Sync, E : EventChannel + Send + Sync> {
     command_store: &'c CommandStore,
-    event_producer: &'c mut CqrsEventProducer,
-    command_response_channel: &'c dyn OutboundChannel,
+    command_response_channel: &'c CR,
+    event_channel: &'c E,
+    service_id: &'c str
 }
 
 #[async_trait]
-impl MessageConsumer for CommandServiceServer<'_> {
+impl<CR: CommandResponseChannel + Send + Sync, E: EventChannel + Send + Sync> MessageConsumer for CommandServiceServer<'_, CR, E> {
     async fn consume(&self, message: &[u8]) -> Result<()> {
-        let command_response = handle_command(&message, &self.command_store, &self.event_producer)?;
+        let event_producer = CqrsEventProducer::new(self.service_id, self.event_channel);
+        let command_response = handle_command(&message, &self.command_store, &event_producer)?;
         match command_response {
             None => Err(Error::Generic("No command response found".into())),
             Some(command_response) => {
                 self.command_response_channel
-                    .send("".as_bytes(), command_response.as_slice());
+                    .send_command_response("".as_bytes(), command_response.as_slice())?;
                 Ok(())
             }
         }
     }
 }
 
-impl<'a> CommandServiceServer<'a> {
+impl<'a, CR: CommandResponseChannel + Send + Sync, E: EventChannel + Send + Sync> CommandServiceServer<'a, CR, E> {
     pub fn new(
         command_store: &'a CommandStore,
-        event_producer: &'a mut CqrsEventProducer,
-        command_response_channel: &'a dyn OutboundChannel,
-    ) -> CommandServiceServer<'a> {
+        command_response_channel: &'a CR,
+        event_channel: &'a E,
+        service_id: &'a str
+    ) -> CommandServiceServer<'a, CR, E> {
         CommandServiceServer {
             command_store,
-            event_producer,
             command_response_channel,
+            event_channel,
+            service_id,
         }
     }
 }
@@ -226,8 +230,8 @@ mod tests {
 
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
-    use crate::cqrs::traits::{Command, EventProducer, MessageConsumer, OutboundChannel};
-    use crate::cqrs::{CommandServiceClient, CommandServiceServer, CqrsEventProducer, Event};
+    use crate::cqrs::traits::{Command, CommandResponseChannel, EventChannel, EventProducer, MessageConsumer, OutboundChannel};
+    use crate::cqrs::{CommandServiceClient, CommandServiceServer, Event};
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
 
@@ -266,6 +270,32 @@ mod tests {
     struct TokioOutboundChannel {
         sender: Mutex<Option<Sender<Vec<u8>>>>,
     }
+
+    struct TokioEventChannel {
+        sender_command_responses: Mutex<Option<Sender<Vec<u8>>>>,
+        sender_events: Mutex<Option<Sender<Vec<u8>>>>,
+    }
+
+    impl EventChannel for TokioEventChannel {
+        fn send_event(&self, _key: &[u8], message: &[u8]) -> crate::prelude::Result<()> {
+            let mut guard = self.sender_events.lock().expect("Could not lock mutex");
+            let tx = guard.take().expect("Could not take sender");
+            tx.send(Vec::from(message)).expect("Could not send message");
+
+            Ok(())
+        }
+    }
+
+    impl CommandResponseChannel for TokioEventChannel {
+        fn send_command_response(&self, _key: &[u8], message: &[u8]) -> crate::prelude::Result<()> {
+            let mut guard = self.sender_command_responses.lock().expect("Could not lock mutex");
+            let tx = guard.take().expect("Could not take sender");
+            tx.send(Vec::from(message)).expect("Could not send message");
+
+            Ok(())
+        }
+    }
+
 
     impl TokioOutboundChannel {
         fn new(sender: Sender<Vec<u8>>) -> Self {
@@ -361,15 +391,12 @@ mod tests {
             let mut command_store = CommandStore::new("COMMAND-SERVER");
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-            let mut event_producer = CqrsEventProducer::new(
-                "COMMAND-SERVER",
-                Box::new(TokioOutboundChannel::new(event_sender)),
-            );
-            let outbound_channel = TokioOutboundChannel {
-                sender: Mutex::new(Some(response_sender)),
+            let outbound_channel = TokioEventChannel {
+                sender_command_responses: Mutex::new(Some(response_sender)),
+                sender_events: Mutex::new(Some(event_sender)),
             };
             let command_service_server =
-                CommandServiceServer::new(&command_store, &mut event_producer, &outbound_channel);
+                CommandServiceServer::new(&command_store, &outbound_channel, &outbound_channel, "COMMAND-SERVER");
 
             let result = command_receiver.await.unwrap();
             command_service_server
@@ -378,9 +405,10 @@ mod tests {
                 .unwrap();
         });
 
+        let command_channel = TokioOutboundChannel::new(command_sender);
         let command_service_client = Arc::new(CommandServiceClient::new(
             "COMMAND-CLIENT",
-            Box::new(TokioOutboundChannel::new(command_sender)),
+            command_channel,
         ));
 
         let client_for_task = Arc::clone(&command_service_client);

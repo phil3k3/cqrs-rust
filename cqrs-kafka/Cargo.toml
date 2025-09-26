@@ -11,6 +11,7 @@ rdkafka = { workspace = true }
 log = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+config = { workspace = true }
 
 [dev-dependencies]
 testcontainers = { workspace = true }

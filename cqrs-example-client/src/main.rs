@@ -18,7 +18,7 @@ struct CreateUserCommand {
 }
 
 struct AppState {
-    client: Arc<CommandServiceClient>,
+    client: Arc<CommandServiceClient<KafkaOutboundChannel>>,
 }
 
 impl Command<'_> for CreateUserCommand {
@@ -105,11 +105,13 @@ async fn main() -> io::Result<()> {
         let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
         let arc = Arc::new(event_listener);
+        let transaction_handler = cqrs_kafka::traits::NoopTransactionHandler::default();
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
             &settings.get_string("service_id").unwrap(),
             topics.as_slice(),
             &settings.get_string("bootstrap_server").unwrap(),
             arc.clone(),
+            &transaction_handler,
             false,
         )
         .expect("Could not create kafka event listener channel");
@@ -121,14 +123,17 @@ async fn main() -> io::Result<()> {
         .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
         .build()
         .unwrap();
+    let command_topic = settings_inner.get_string("command_topic").expect("Could not get command topic");
+    let bootstrap_server = settings_inner.get_string("bootstrap_server").expect("Could not get bootstrap server");
+
     let kafka_command_channel = KafkaOutboundChannel::new(
-        &settings_inner.get_string("command_topic").unwrap(),
-        &settings_inner.get_string("bootstrap_server").unwrap(),
+        command_topic,
+        bootstrap_server.as_str(),
     )
     .expect("Could not create kafka command channel");
     let client = CommandServiceClient::new(
         &settings_inner.get_string("service_id").unwrap(),
-        Box::new(kafka_command_channel),
+        kafka_command_channel
     );
     let command_service_client = Arc::new(client);
 
@@ -143,6 +148,7 @@ async fn main() -> io::Result<()> {
             &[&settings.get_string("response_topic").unwrap()],
             &settings.get_string("bootstrap_server").unwrap(),
             client_for_task,
+            &cqrs_kafka::traits::NoopTransactionHandler {},
             false,
         )
         .expect("Failed to create command channel");
