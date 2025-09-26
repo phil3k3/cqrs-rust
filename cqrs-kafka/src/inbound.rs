@@ -1,12 +1,12 @@
 use crate::operations::{create_basic_consumer, create_streaming_consumer, CustomContext};
 use crate::prelude::*;
+use crate::traits::TransactionHandler;
 use cqrs_library::cqrs::traits::{InboundChannel, MessageConsumer};
 use futures::TryStreamExt;
 use rdkafka::consumer::{BaseConsumer, Consumer, StreamConsumer};
 use rdkafka::{Message, Offset, TopicPartitionList};
 use std::sync::Arc;
 use std::time::Duration;
-use crate::traits::TransactionHandler;
 
 pub struct KafkaInboundChannel {
     consumer: BaseConsumer<CustomContext>,
@@ -15,7 +15,7 @@ pub struct KafkaInboundChannel {
 pub struct StreamKafkaInboundChannel<'a, T: MessageConsumer, H: TransactionHandler> {
     consumer: StreamConsumer<CustomContext>,
     message_consumer: Arc<T>,
-    transaction_handler: &'a H
+    transaction_handler: &'a H,
 }
 
 impl KafkaInboundChannel {
@@ -80,16 +80,30 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
                 let consumer = consumer.clone();
                 async move {
                     let mut offsets = TopicPartitionList::new();
-                    offsets.add_partition_offset(borrowed_message.topic(), borrowed_message.partition(), Offset::Offset(borrowed_message.offset()+1))?;
+                    offsets.add_partition_offset(
+                        borrowed_message.topic(),
+                        borrowed_message.partition(),
+                        Offset::Offset(borrowed_message.offset() + 1),
+                    )?;
                     // this intentionally panics to make sure that the pod is crash looping on faulty message processing as we want to
                     // ensure consistency, hence we can't skip over a message
                     // ((( ----
-                    self.transaction_handler.begin_transaction().expect("Could not begin transaction");
-                    let consumer_metadata = self.consumer.group_metadata().expect("Could not get consumer metadata");
+                    self.transaction_handler
+                        .begin_transaction()
+                        .expect("Could not begin transaction");
+                    let consumer_metadata = self
+                        .consumer
+                        .group_metadata()
+                        .expect("Could not get consumer metadata");
                     if let Some(message) = borrowed_message.payload() {
-                        consumer.consume(message).await.expect("Could not consume message");
+                        consumer
+                            .consume(message)
+                            .await
+                            .expect("Could not consume message");
                     }
-                    self.transaction_handler.commit_transaction(&offsets, &consumer_metadata).expect("Could not commit transaction");
+                    self.transaction_handler
+                        .commit_transaction(&offsets, &consumer_metadata)
+                        .expect("Could not commit transaction");
                     // ))) ----
                     Ok(())
                 }

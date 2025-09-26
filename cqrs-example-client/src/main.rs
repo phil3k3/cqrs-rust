@@ -87,10 +87,12 @@ async fn post_user(
 async fn main() -> io::Result<()> {
     info!("=== STARTING EXAMPLE CQRS CLIENT ===");
 
-    let settings = Config::builder()
-        .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
-        .build()
-        .unwrap();
+    let settings = Arc::new(
+        Config::builder()
+            .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
+            .build()
+            .expect("Cannot find settings"),
+    );
 
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", &settings.get_string("log_level").unwrap())
@@ -98,18 +100,23 @@ async fn main() -> io::Result<()> {
 
     env_logger::init();
 
+    let settings_event_listener = settings.clone();
     tokio::spawn(async move {
         let mut event_listener = EventListener::new();
         event_listener.register_handler("UserCreatedEvent", handle_event);
 
-        let subscriptions_list = &settings.get_string("service_subscriptions").unwrap();
+        let subscriptions_list = &settings_event_listener
+            .get_string("service_subscriptions")
+            .unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
         let arc = Arc::new(event_listener);
         let transaction_handler = cqrs_kafka::traits::NoopTransactionHandler::default();
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
-            &settings.get_string("service_id").unwrap(),
+            &settings_event_listener.get_string("service_id").unwrap(),
             topics.as_slice(),
-            &settings.get_string("bootstrap_server").unwrap(),
+            &settings_event_listener
+                .get_string("bootstrap_server")
+                .unwrap(),
             arc.clone(),
             &transaction_handler,
             false,
@@ -119,34 +126,32 @@ async fn main() -> io::Result<()> {
         kafka_event_listener_channel.consume_async_blocking().await;
     });
 
-    let settings_inner = Config::builder()
-        .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
-        .build()
-        .unwrap();
-    let command_topic = settings_inner.get_string("command_topic").expect("Could not get command topic");
-    let bootstrap_server = settings_inner.get_string("bootstrap_server").expect("Could not get bootstrap server");
+    let command_topic = settings
+        .get_string("command_topic")
+        .expect("Could not get command topic");
+    let bootstrap_server = settings
+        .get_string("bootstrap_server")
+        .expect("Could not get bootstrap server");
 
-    let kafka_command_channel = KafkaOutboundChannel::new(
-        command_topic,
-        bootstrap_server.as_str(),
-    )
-    .expect("Could not create kafka command channel");
+    let kafka_command_channel = KafkaOutboundChannel::new(command_topic, bootstrap_server.as_str())
+        .expect("Could not create kafka command channel");
     let client = CommandServiceClient::new(
-        &settings_inner.get_string("service_id").unwrap(),
-        kafka_command_channel
+        &settings.get_string("service_id").unwrap(),
+        kafka_command_channel,
     );
     let command_service_client = Arc::new(client);
 
     let client_for_task = Arc::clone(&command_service_client);
+    let settings_command_listener = settings.clone();
     tokio::spawn(async move {
-        let settings = Config::builder()
-            .add_source(config::File::with_name("cqrs-example-client/src/Settings"))
-            .build()
-            .unwrap();
         let command_channel = StreamKafkaInboundChannel::new(
             "COMMAND-CLIENT",
-            &[&settings.get_string("response_topic").unwrap()],
-            &settings.get_string("bootstrap_server").unwrap(),
+            &[&settings_command_listener
+                .get_string("response_topic")
+                .unwrap()],
+            &settings_command_listener
+                .get_string("bootstrap_server")
+                .unwrap(),
             client_for_task,
             &cqrs_kafka::traits::NoopTransactionHandler {},
             false,
