@@ -59,7 +59,8 @@ fn create_basic_config(
         .set("bootstrap.servers", bootstrap_server)
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "true")
-        .set("isolation.level", "read_uncommitted")
+        .set("isolation.level", "read_committed")
+        .set("enable.auto.commit", "false")
         .set(
             "auto.offset.reset",
             if default_reset { "earliest" } else { "latest" },
