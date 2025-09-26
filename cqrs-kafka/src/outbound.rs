@@ -166,7 +166,7 @@ impl KafkaOutboundChannel {
     }
 }
 
-impl<'a> OutboundChannel for KafkaOutboundChannel {
+impl OutboundChannel for KafkaOutboundChannel {
     fn send(&self, key: &[u8], message: &[u8]) {
         self.producer
             .send(

@@ -34,7 +34,7 @@ impl<'a> TransactionHandler for TransactionalKafkaOutboundChannel<'a> {
             .map_err(|x| Error::from(x))
     }
 
-    fn commit(&self, list: &TopicPartitionList, consumer: &ConsumerGroupMetadata) -> Result<()> {
+    fn commit_transaction(&self, list: &TopicPartitionList, consumer: &ConsumerGroupMetadata) -> Result<()> {
         self.producer.send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
             .map_err(|x| Error::from(x))
     }

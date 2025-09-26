@@ -89,7 +89,7 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
                     if let Some(message) = borrowed_message.payload() {
                         consumer.consume(message).await.expect("Could not consume message");
                     }
-                    self.transaction_handler.commit(&offsets, &consumer_metadata).expect("Could not commit transaction");
+                    self.transaction_handler.commit_transaction(&offsets, &consumer_metadata).expect("Could not commit transaction");
                     // ))) ----
                     Ok(())
                 }

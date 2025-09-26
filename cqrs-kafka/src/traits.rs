@@ -7,7 +7,7 @@ pub trait TransactionHandler {
         Ok(())
     }
 
-    fn commit(&self, _topic_partition_list: &TopicPartitionList, _consumer_group_metadata: &ConsumerGroupMetadata) -> Result<()> {
+    fn commit_transaction(&self, _topic_partition_list: &TopicPartitionList, _consumer_group_metadata: &ConsumerGroupMetadata) -> Result<()> {
         Ok(())
     }
 }
