@@ -22,11 +22,11 @@ pub trait OutboundChannel: Send + Sync {
     fn send(&self, key: &[u8], message: &[u8]);
 }
 
-pub trait EventChannel : Send + Sync {
+pub trait EventChannel: Send + Sync {
     fn send_event(&self, key: &[u8], message: &[u8]) -> Result<()>;
 }
 
-pub trait CommandResponseChannel : Send + Sync {
+pub trait CommandResponseChannel: Send + Sync {
     fn send_command_response(&self, key: &[u8], message: &[u8]) -> Result<()>;
 }
 

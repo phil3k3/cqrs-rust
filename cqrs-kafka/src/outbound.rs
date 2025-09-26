@@ -1,57 +1,61 @@
 use crate::prelude::*;
+use crate::traits::TransactionHandler;
+use crate::KafkaSettings;
 use cqrs_library::cqrs::traits::{CommandResponseChannel, EventChannel, OutboundChannel};
 use log::{error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::config::RDKafkaLogLevel;
+use rdkafka::consumer::ConsumerGroupMetadata;
 use rdkafka::producer::{BaseRecord, DeliveryResult, Producer, ProducerContext, ThreadedProducer};
+use rdkafka::util::Timeout;
 use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use std::time::Duration;
-use rdkafka::consumer::ConsumerGroupMetadata;
-use rdkafka::util::Timeout;
-use crate::KafkaSettings;
-use crate::traits::TransactionHandler;
 
 pub struct KafkaOutboundChannel {
     topic: String,
-    producer: ThreadedProducer<ProducerCallbackLogger>
+    producer: ThreadedProducer<ProducerCallbackLogger>,
 }
 
 pub struct TransactionalKafkaOutboundChannel<'a> {
     pub kafka_settings: &'a KafkaSettings,
     pub producer: ThreadedProducer<ProducerCallbackLogger>,
-    pub admin_client: AdminClient<ProducerCallbackLogger>
+    pub admin_client: AdminClient<ProducerCallbackLogger>,
 }
 
 impl<'a> TransactionHandler for TransactionalKafkaOutboundChannel<'a> {
     fn begin_transaction(&self) -> Result<()> {
-        self.producer.begin_transaction()
+        self.producer
+            .begin_transaction()
             .map_err(|x| Error::from(x))
     }
 
-    fn commit_transaction(&self, list: &TopicPartitionList, consumer: &ConsumerGroupMetadata) -> Result<()> {
-        self.producer.send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
+    fn commit_transaction(
+        &self,
+        list: &TopicPartitionList,
+        consumer: &ConsumerGroupMetadata,
+    ) -> Result<()> {
+        self.producer
+            .send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
             .map_err(|x| Error::from(x))
     }
 }
 
 impl<'a> TransactionalKafkaOutboundChannel<'a> {
-
     pub fn new(kafka_settings: &'a KafkaSettings) -> Result<Self> {
         let producer = create_transactional_producer(
             kafka_settings.bootstrap_server.as_str(),
             kafka_settings.transaction_id.as_str(),
         )?;
-        let admin_client= create_admin_client(kafka_settings.bootstrap_server.as_str())?;
+        let admin_client = create_admin_client(kafka_settings.bootstrap_server.as_str())?;
         Ok(Self {
             kafka_settings,
             producer,
-            admin_client
+            admin_client,
         })
     }
 
     pub async fn create_topic(&self, topic: &str) -> Result<()> {
-        self
-            .admin_client
+        self.admin_client
             .create_topics(
                 &[NewTopic::new(topic, 1, TopicReplication::Fixed(1))],
                 &AdminOptions::new(),
@@ -68,7 +72,8 @@ impl<'a> EventChannel for TransactionalKafkaOutboundChannel<'a> {
                 BaseRecord::to(self.kafka_settings.events_topic.as_str())
                     .key(key)
                     .payload(event),
-            ).map_err(|x| Error::from(x.0))?;
+            )
+            .map_err(|x| Error::from(x.0))?;
         for _ in 0..10 {
             self.producer.poll(Duration::from_millis(100));
         }
@@ -77,13 +82,18 @@ impl<'a> EventChannel for TransactionalKafkaOutboundChannel<'a> {
 }
 
 impl<'a> CommandResponseChannel for TransactionalKafkaOutboundChannel<'a> {
-    fn send_command_response(&self, key: &[u8], message: &[u8]) -> cqrs_library::prelude::Result<()> {
+    fn send_command_response(
+        &self,
+        key: &[u8],
+        message: &[u8],
+    ) -> cqrs_library::prelude::Result<()> {
         self.producer
             .send(
                 BaseRecord::to(self.kafka_settings.command_response_topic.as_str())
                     .key(key)
                     .payload(message),
-            ).map_err(|x| Error::from(x.0))?;
+            )
+            .map_err(|x| Error::from(x.0))?;
         for _ in 0..10 {
             self.producer.poll(Duration::from_millis(100));
         }
@@ -135,7 +145,10 @@ fn create_producer(bootstrap_server: &str) -> Result<ThreadedProducer<ProducerCa
         .map_err(|x| x.into())
 }
 
-fn create_transactional_producer(bootstrap_server: &str, transaction_id: &str) -> Result<ThreadedProducer<ProducerCallbackLogger>> {
+fn create_transactional_producer(
+    bootstrap_server: &str,
+    transaction_id: &str,
+) -> Result<ThreadedProducer<ProducerCallbackLogger>> {
     let mut config = ClientConfig::new();
     config
         .set("bootstrap.servers", bootstrap_server)
@@ -153,7 +166,6 @@ fn create_transactional_producer(bootstrap_server: &str, transaction_id: &str) -
         .map_err(|x| x.into())
 }
 
-
 pub fn create_admin_client(bootstrap_server: &str) -> Result<AdminClient<ProducerCallbackLogger>> {
     let mut config = ClientConfig::new();
     config.set("bootstrap.servers", bootstrap_server);
@@ -166,10 +178,7 @@ pub fn create_admin_client(bootstrap_server: &str) -> Result<AdminClient<Produce
 impl KafkaOutboundChannel {
     pub fn new(topic: String, bootstrap_server: &str) -> Result<KafkaOutboundChannel> {
         let producer = create_producer(bootstrap_server)?;
-        Ok(KafkaOutboundChannel {
-            topic,
-            producer,
-        })
+        Ok(KafkaOutboundChannel { topic, producer })
     }
 }
 

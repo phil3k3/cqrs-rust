@@ -3,9 +3,9 @@ mod prelude;
 
 use crate::prelude::*;
 use config::Config;
-use cqrs_kafka::KafkaSettings;
 use cqrs_kafka::inbound::StreamKafkaInboundChannel;
 use cqrs_kafka::outbound::TransactionalKafkaOutboundChannel;
+use cqrs_kafka::KafkaSettings;
 use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
 use cqrs_library::cqrs::messages::CommandResponse;
 use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
@@ -14,7 +14,6 @@ use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::sync::Arc;
-
 
 fn handle_create_user(
     command_accessor: &mut CommandAccessor,
@@ -62,7 +61,6 @@ impl Command<'_> for TestCreateUserCommand {
     }
 }
 
-
 #[derive(Debug, Deserialize, Serialize)]
 struct UserCreatedEvent {
     user_id: String,
@@ -96,9 +94,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let kafka_settings = KafkaSettings::from(settings);
-    let transaction_channel = TransactionalKafkaOutboundChannel::new(
-        &kafka_settings
-    )?;
+    let transaction_channel = TransactionalKafkaOutboundChannel::new(&kafka_settings)?;
 
     info!("Creating topics");
     transaction_channel
@@ -114,7 +110,6 @@ async fn main() -> Result<()> {
     let mut command_store = CommandStore::new(kafka_settings.service_id.as_str());
     command_store.register_handler("CreateUserCommand", handle_create_user);
 
-
     let command_service_server = CommandServiceServer::new(
         &command_store,
         &transaction_channel,
@@ -128,7 +123,7 @@ async fn main() -> Result<()> {
         &kafka_settings.bootstrap_server,
         Arc::new(command_service_server),
         &transaction_channel,
-        false
+        false,
     )
     .expect("Failed to create command channel");
 
