@@ -1,11 +1,4 @@
-use std::time::Duration;
 use config::Config;
-use rdkafka::consumer::ConsumerGroupMetadata;
-use rdkafka::producer::Producer;
-use rdkafka::TopicPartitionList;
-use rdkafka::util::Timeout;
-use crate::outbound::{KafkaSettings, TransactionalKafkaOutboundChannel};
-use crate::traits::TransactionHandler;
 
 pub mod error;
 pub mod inbound;
@@ -14,7 +7,14 @@ pub mod outbound;
 mod prelude;
 pub mod traits;
 
-use crate::prelude::*;
+pub struct KafkaSettings {
+    pub bootstrap_server: String,
+    pub transaction_id: String,
+    pub events_topic: String,
+    pub commands_topic: String,
+    pub command_response_topic: String,
+    pub service_id: String
+}
 
 impl From<Config> for KafkaSettings {
     fn from(value: Config) -> Self {
@@ -28,17 +28,7 @@ impl From<Config> for KafkaSettings {
         }
     }
 }
-impl<'a> TransactionHandler for TransactionalKafkaOutboundChannel<'a> {
-    fn begin_transaction(&self) -> Result<()> {
-        self.producer.begin_transaction()
-            .map_err(|x| Error::from(x))
-    }
 
-    fn commit_transaction(&self, list: &TopicPartitionList, consumer: &ConsumerGroupMetadata) -> Result<()> {
-        self.producer.send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
-            .map_err(|x| Error::from(x))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -46,9 +36,9 @@ mod tests {
     use crate::outbound::{create_admin_client, KafkaOutboundChannel};
     use cqrs_library::cqrs::traits::{InboundChannel, OutboundChannel};
     use log::info;
+    use rdkafka::admin::{AdminOptions, NewTopic, TopicReplication};
     use std::sync::mpsc::channel;
     use std::thread;
-    use rdkafka::admin::{AdminOptions, NewTopic, TopicReplication};
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::kafka::{Kafka, KAFKA_PORT};
 

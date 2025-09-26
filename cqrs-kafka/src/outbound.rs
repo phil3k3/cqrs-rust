@@ -4,8 +4,12 @@ use log::{error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::config::RDKafkaLogLevel;
 use rdkafka::producer::{BaseRecord, DeliveryResult, Producer, ProducerContext, ThreadedProducer};
-use rdkafka::{ClientConfig, ClientContext, Message};
+use rdkafka::{ClientConfig, ClientContext, Message, TopicPartitionList};
 use std::time::Duration;
+use rdkafka::consumer::ConsumerGroupMetadata;
+use rdkafka::util::Timeout;
+use crate::KafkaSettings;
+use crate::traits::TransactionHandler;
 
 pub struct KafkaOutboundChannel {
     topic: String,
@@ -18,13 +22,16 @@ pub struct TransactionalKafkaOutboundChannel<'a> {
     pub admin_client: AdminClient<ProducerCallbackLogger>
 }
 
-pub struct KafkaSettings {
-    pub bootstrap_server: String,
-    pub transaction_id: String,
-    pub events_topic: String,
-    pub commands_topic: String,
-    pub command_response_topic: String,
-    pub service_id: String
+impl<'a> TransactionHandler for TransactionalKafkaOutboundChannel<'a> {
+    fn begin_transaction(&self) -> Result<()> {
+        self.producer.begin_transaction()
+            .map_err(|x| Error::from(x))
+    }
+
+    fn commit_transaction(&self, list: &TopicPartitionList, consumer: &ConsumerGroupMetadata) -> Result<()> {
+        self.producer.send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
+            .map_err(|x| Error::from(x))
+    }
 }
 
 impl<'a> TransactionalKafkaOutboundChannel<'a> {
