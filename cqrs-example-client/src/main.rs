@@ -117,13 +117,16 @@ async fn main() -> io::Result<()> {
             &settings_event_listener
                 .get_string("bootstrap_server")
                 .unwrap(),
-            arc.clone(),
+            arc,
             &transaction_handler,
             false,
         )
         .expect("Could not create kafka event listener channel");
 
-        kafka_event_listener_channel.consume_async_blocking().await;
+        kafka_event_listener_channel
+            .consume_async_blocking()
+            .await
+            .expect("Failed to consume event channel");
     });
 
     let command_topic = settings
@@ -158,7 +161,10 @@ async fn main() -> io::Result<()> {
         )
         .expect("Failed to create command channel");
 
-        command_channel.consume_async_blocking().await;
+        command_channel
+            .consume_async_blocking()
+            .await
+            .expect("Failed to consume command channel");
     });
 
     let command_service_client = command_service_client.clone();

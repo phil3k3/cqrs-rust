@@ -12,6 +12,7 @@ log = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 config = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 testcontainers = { workspace = true }

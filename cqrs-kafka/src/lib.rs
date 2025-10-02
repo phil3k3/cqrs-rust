@@ -1,4 +1,16 @@
+use crate::inbound::StreamKafkaInboundChannel;
+use crate::outbound::{create_admin_client, create_transactional_producer, ProducerCallbackLogger};
+use async_trait::async_trait;
 use config::Config;
+use cqrs_library::cqrs::traits::{EventSender, Transport};
+use cqrs_library::cqrs::CommandServiceServer;
+use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
+use rdkafka::consumer::ConsumerGroupMetadata;
+use rdkafka::producer::{BaseRecord, Producer, ThreadedProducer};
+use rdkafka::util::Timeout;
+use rdkafka::TopicPartitionList;
+use std::sync::Arc;
+use std::time::Duration;
 
 pub mod error;
 pub mod inbound;
@@ -6,6 +18,9 @@ mod operations;
 pub mod outbound;
 mod prelude;
 pub mod traits;
+
+use crate::prelude::*;
+use crate::traits::TransactionHandler;
 
 pub struct KafkaSettings {
     pub bootstrap_server: String,
@@ -38,6 +53,113 @@ impl From<Config> for KafkaSettings {
                 .get_string("service_id")
                 .expect("Service id must be configured"),
         }
+    }
+}
+
+pub struct KafkaTransport<'a> {
+    pub kafka_settings: &'a KafkaSettings,
+    pub producer: ThreadedProducer<ProducerCallbackLogger>,
+    pub admin_client: AdminClient<ProducerCallbackLogger>,
+}
+
+impl<'a> KafkaTransport<'a> {
+    pub fn new(kafka_settings: &'a KafkaSettings) -> Result<Self> {
+        let producer = create_transactional_producer(
+            kafka_settings.bootstrap_server.as_str(),
+            kafka_settings.transaction_id.as_str(),
+        )?;
+        let admin_client = create_admin_client(kafka_settings.bootstrap_server.as_str())?;
+
+        Ok(Self {
+            kafka_settings,
+            producer,
+            admin_client,
+        })
+    }
+
+    pub async fn create_topic(&self, topic: &str) -> Result<()> {
+        self.admin_client
+            .create_topics(
+                &[NewTopic::new(topic, 1, TopicReplication::Fixed(1))],
+                &AdminOptions::new(),
+            )
+            .await?;
+        Ok(())
+    }
+}
+
+impl<'a> EventSender for KafkaTransport<'a> {
+    fn send_event(&self, key: &[u8], event: &[u8]) -> cqrs_library::prelude::Result<()> {
+        self.producer
+            .send(
+                BaseRecord::to(self.kafka_settings.events_topic.as_str())
+                    .key(key)
+                    .payload(event),
+            )
+            .map_err(|x| Error::from(x.0))?;
+        for _ in 0..10 {
+            self.producer.poll(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<'a> Transport for KafkaTransport<'a> {
+    type Transport = KafkaTransport<'a>;
+
+    fn send_command_response(
+        &self,
+        key: &[u8],
+        message: &[u8],
+    ) -> cqrs_library::prelude::Result<()> {
+        self.producer
+            .send(
+                BaseRecord::to(self.kafka_settings.command_response_topic.as_str())
+                    .key(key)
+                    .payload(message),
+            )
+            .map_err(|x| Error::from(x.0))?;
+        for _ in 0..10 {
+            self.producer.poll(Duration::from_millis(100));
+        }
+        Ok(())
+    }
+
+    async fn consume_async_blocking<'s>(
+        &self,
+        message_consumer: CommandServiceServer<'s, Self::Transport>,
+    ) -> cqrs_library::prelude::Result<()> {
+        let command_channel = StreamKafkaInboundChannel::new(
+            self.kafka_settings.service_id.as_str(),
+            &[self.kafka_settings.commands_topic.as_str()],
+            &self.kafka_settings.bootstrap_server,
+            Arc::new(message_consumer),
+            self,
+            false,
+        )?;
+        command_channel
+            .consume_async_blocking()
+            .await
+            .map_err(|x| cqrs_library::error::Error::from(x))
+    }
+}
+
+impl<'a> TransactionHandler for KafkaTransport<'a> {
+    fn begin_transaction(&self) -> Result<()> {
+        self.producer
+            .begin_transaction()
+            .map_err(|x| Error::from(x))
+    }
+
+    fn commit_transaction(
+        &self,
+        list: &TopicPartitionList,
+        consumer: &ConsumerGroupMetadata,
+    ) -> Result<()> {
+        self.producer
+            .send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
+            .map_err(|x| Error::from(x))
     }
 }
 

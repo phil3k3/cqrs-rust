@@ -72,7 +72,7 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
         Ok(channel)
     }
 
-    pub async fn consume_async_blocking(&self) {
+    pub async fn consume_async_blocking(&self) -> Result<()> {
         let consumer = self.message_consumer.clone();
         self.consumer
             .stream()
@@ -109,6 +109,6 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
                 }
             })
             .await
-            .expect("Stream processing failed")
+            .map_err(|e| e.into())
     }
 }

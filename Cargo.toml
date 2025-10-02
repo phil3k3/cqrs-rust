@@ -28,4 +28,3 @@ testcontainers = "0.25.0"
 testcontainers-modules =  { version = "0.13.0", features = ["kafka"]}
 dashmap = "6.1.0"
 async-trait = "0.1.89"
-display_json = "0.2.1"

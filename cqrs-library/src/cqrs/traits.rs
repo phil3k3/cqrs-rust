@@ -1,3 +1,4 @@
+use crate::cqrs::CommandServiceServer;
 use crate::prelude::*;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -22,12 +23,20 @@ pub trait OutboundChannel: Send + Sync {
     fn send(&self, key: &[u8], message: &[u8]);
 }
 
-pub trait EventChannel: Send + Sync {
+pub trait EventSender {
     fn send_event(&self, key: &[u8], message: &[u8]) -> Result<()>;
 }
 
-pub trait CommandResponseChannel: Send + Sync {
+#[async_trait]
+pub trait Transport: Send + Sync + EventSender {
+    type Transport: Transport;
+
     fn send_command_response(&self, key: &[u8], message: &[u8]) -> Result<()>;
+
+    async fn consume_async_blocking<'a>(
+        &self,
+        command_service_server: CommandServiceServer<'a, Self::Transport>,
+    ) -> Result<()>;
 }
 
 pub trait InboundChannel {
