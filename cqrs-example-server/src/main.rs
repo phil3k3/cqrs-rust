@@ -3,9 +3,7 @@ mod prelude;
 
 use crate::prelude::*;
 use config::Config;
-use cqrs_kafka::inbound::StreamKafkaInboundChannel;
-use cqrs_kafka::outbound::TransactionalKafkaOutboundChannel;
-use cqrs_kafka::KafkaSettings;
+use cqrs_kafka::{KafkaSettings, KafkaTransport};
 use cqrs_library::cqrs::command::{CommandAccessor, CommandStore};
 use cqrs_library::cqrs::messages::CommandResponse;
 use cqrs_library::cqrs::traits::{Command, Event, EventProducer};
@@ -13,7 +11,6 @@ use cqrs_library::cqrs::CommandServiceServer;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::sync::Arc;
 
 fn handle_create_user(
     command_accessor: &mut CommandAccessor,
@@ -94,16 +91,16 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let kafka_settings = KafkaSettings::from(settings);
-    let transaction_channel = TransactionalKafkaOutboundChannel::new(&kafka_settings)?;
+    let transport = KafkaTransport::new(&kafka_settings)?;
 
     info!("Creating topics");
-    transaction_channel
+    transport
         .create_topic(&kafka_settings.commands_topic.as_str())
         .await?;
-    transaction_channel
+    transport
         .create_topic(&kafka_settings.command_response_topic.as_str())
         .await?;
-    transaction_channel
+    transport
         .create_topic(&kafka_settings.events_topic.as_str())
         .await?;
 
@@ -112,22 +109,9 @@ async fn main() -> Result<()> {
 
     let command_service_server = CommandServiceServer::new(
         &command_store,
-        &transaction_channel,
-        &transaction_channel,
+        &transport,
         kafka_settings.service_id.as_str(),
     );
 
-    let command_channel = StreamKafkaInboundChannel::new(
-        kafka_settings.service_id.as_str(),
-        &[kafka_settings.commands_topic.as_str()],
-        &kafka_settings.bootstrap_server,
-        Arc::new(command_service_server),
-        &transaction_channel,
-        false,
-    )
-    .expect("Failed to create command channel");
-
-    command_channel.consume_async_blocking().await;
-
-    Ok(())
+    command_service_server.run().await.map_err(|x| x.into())
 }

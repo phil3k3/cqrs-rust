@@ -10,8 +10,7 @@ use crate::cqrs::operations::{
     decode_message, handle_command, serialize_command_to_protobuf, serialize_event_to_protobuf,
 };
 use crate::cqrs::traits::{
-    Command, CommandResponseChannel, Event, EventChannel, EventProducer, MessageConsumer,
-    OutboundChannel,
+    Command, Event, EventProducer, MessageConsumer, OutboundChannel, Transport,
 };
 use async_trait::async_trait;
 use cqrs_messages::cqrs::messages::DomainEventEnvelopeProto;
@@ -25,34 +24,6 @@ use tokio::sync::oneshot::{channel, Sender};
 use uuid::Uuid;
 
 use crate::prelude::*;
-
-pub struct CqrsEventProducer<'c, E: EventChannel + Send> {
-    service_id: String,
-    event_channel: &'c E,
-}
-
-impl<'c, O: EventChannel + Send> EventProducer for CqrsEventProducer<'c, O> {
-    fn produce(&self, event: &dyn Event) -> Result<()> {
-        let event_message = self.convert_event(event)?;
-        self.event_channel
-            .send_event(event.get_id().as_bytes(), event_message.as_slice())?;
-        Ok(())
-    }
-}
-
-impl<'e, E: EventChannel + Send> CqrsEventProducer<'e, E> {
-    pub fn new(service_id: &str, event_channel: &'e E) -> CqrsEventProducer<'e, E> {
-        CqrsEventProducer {
-            service_id: String::from(service_id),
-            event_channel,
-        }
-    }
-
-    fn convert_event(&self, event: &dyn Event) -> Result<Vec<u8>> {
-        let event_id = Uuid::new_v4().to_string();
-        serialize_event_to_protobuf(event, self.service_id.as_str(), event_id.as_str())
-    }
-}
 
 pub struct CommandServiceClient<O: OutboundChannel + Sync + Send> {
     service_id: String,
@@ -180,28 +151,22 @@ impl<'a, O: OutboundChannel + Send + Sync> CommandServiceClient<O> {
     }
 }
 
-pub struct CommandServiceServer<
-    'c,
-    CR: CommandResponseChannel + Send + Sync,
-    E: EventChannel + Send + Sync,
-> {
+pub struct CommandServiceServer<'c, T: Transport + Send + Sync> {
     command_store: &'c CommandStore,
-    command_response_channel: &'c CR,
-    event_channel: &'c E,
+    transport: &'c T,
     service_id: &'c str,
+
+    _phantom: std::marker::PhantomData<(&'c (), T)>,
 }
 
 #[async_trait]
-impl<CR: CommandResponseChannel + Send + Sync, E: EventChannel + Send + Sync> MessageConsumer
-    for CommandServiceServer<'_, CR, E>
-{
+impl<'c, T: Transport + Send + Sync> MessageConsumer for CommandServiceServer<'c, T> {
     async fn consume(&self, message: &[u8]) -> Result<()> {
-        let event_producer = CqrsEventProducer::new(self.service_id, self.event_channel);
-        let command_response = handle_command(&message, &self.command_store, &event_producer)?;
+        let command_response = handle_command(&message, &self.command_store, self)?;
         match command_response {
             None => Err(Error::Generic("No command response found".into())),
             Some(command_response) => {
-                self.command_response_channel
+                self.transport
                     .send_command_response("".as_bytes(), command_response.as_slice())?;
                 Ok(())
             }
@@ -209,37 +174,47 @@ impl<CR: CommandResponseChannel + Send + Sync, E: EventChannel + Send + Sync> Me
     }
 }
 
-impl<'a, CR: CommandResponseChannel + Send + Sync, E: EventChannel + Send + Sync>
-    CommandServiceServer<'a, CR, E>
-{
+impl<'a, T: Transport> EventProducer for CommandServiceServer<'a, T> {
+    fn produce(&self, event: &dyn Event) -> Result<()> {
+        let event_id = Uuid::new_v4().to_string();
+        let event_message = serialize_event_to_protobuf(event, self.service_id, event_id.as_str())?;
+        self.transport
+            .send_event(event.get_id().as_bytes(), event_message.as_slice())?;
+        Ok(())
+    }
+}
+
+impl<'a, T: Transport<Transport = T> + Send + Sync> CommandServiceServer<'a, T> {
     pub fn new(
         command_store: &'a CommandStore,
-        command_response_channel: &'a CR,
-        event_channel: &'a E,
+        transport: &'a T,
         service_id: &'a str,
-    ) -> CommandServiceServer<'a, CR, E> {
+    ) -> CommandServiceServer<'a, T> {
         CommandServiceServer {
             command_store,
-            command_response_channel,
-            event_channel,
+            transport,
             service_id,
+            _phantom: std::marker::PhantomData,
         }
+    }
+
+    pub async fn run(self) -> Result<()> {
+        self.transport.consume_async_blocking(self).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde::{Deserialize, Serialize};
-    use std::env;
-    use std::sync::{Arc, Mutex};
-
     use crate::cqrs::command::{CommandAccessor, CommandStore};
     use crate::cqrs::messages::CommandResponse;
     use crate::cqrs::traits::{
-        Command, CommandResponseChannel, EventChannel, EventProducer, MessageConsumer,
-        OutboundChannel,
+        Command, EventProducer, EventSender, MessageConsumer, OutboundChannel, Transport,
     };
     use crate::cqrs::{CommandServiceClient, CommandServiceServer, Event};
+    use async_trait::async_trait;
+    use serde::{Deserialize, Serialize};
+    use std::env;
+    use std::sync::{Arc, Mutex};
     use tokio::sync::oneshot;
     use tokio::sync::oneshot::{Receiver, Sender};
 
@@ -279,12 +254,13 @@ mod tests {
         sender: Mutex<Option<Sender<Vec<u8>>>>,
     }
 
-    struct TokioEventChannel {
+    struct TokioTransport {
         sender_command_responses: Mutex<Option<Sender<Vec<u8>>>>,
         sender_events: Mutex<Option<Sender<Vec<u8>>>>,
+        receiver_commands: tokio::sync::Mutex<Option<Receiver<Vec<u8>>>>,
     }
 
-    impl EventChannel for TokioEventChannel {
+    impl EventSender for TokioTransport {
         fn send_event(&self, _key: &[u8], message: &[u8]) -> crate::prelude::Result<()> {
             let mut guard = self.sender_events.lock().expect("Could not lock mutex");
             let tx = guard.take().expect("Could not take sender");
@@ -294,7 +270,10 @@ mod tests {
         }
     }
 
-    impl CommandResponseChannel for TokioEventChannel {
+    #[async_trait]
+    impl Transport for TokioTransport {
+        type Transport = TokioTransport;
+
         fn send_command_response(&self, _key: &[u8], message: &[u8]) -> crate::prelude::Result<()> {
             let mut guard = self
                 .sender_command_responses
@@ -304,6 +283,18 @@ mod tests {
             tx.send(Vec::from(message)).expect("Could not send message");
 
             Ok(())
+        }
+
+        async fn consume_async_blocking<'a>(
+            &self,
+            command_service_server: CommandServiceServer<'a, Self::Transport>,
+        ) -> crate::prelude::Result<()> {
+            let rx = {
+                let mut guard = self.receiver_commands.lock().await;
+                guard.take().unwrap()
+            };
+            let message = rx.await?; // awaiting consumes the oneshot receiver
+            command_service_server.consume(message.as_slice()).await
         }
     }
 
@@ -401,22 +392,15 @@ mod tests {
             let mut command_store = CommandStore::new("COMMAND-SERVER");
             command_store.register_handler("CreateUserCommand", verify_handle_create_user);
 
-            let outbound_channel = TokioEventChannel {
+            let outbound_channel = TokioTransport {
                 sender_command_responses: Mutex::new(Some(response_sender)),
                 sender_events: Mutex::new(Some(event_sender)),
+                receiver_commands: tokio::sync::Mutex::new(Some(command_receiver)),
             };
-            let command_service_server = CommandServiceServer::new(
-                &command_store,
-                &outbound_channel,
-                &outbound_channel,
-                "COMMAND-SERVER",
-            );
+            let command_service_server =
+                CommandServiceServer::new(&command_store, &outbound_channel, "COMMAND-SERVER");
 
-            let result = command_receiver.await.unwrap();
-            command_service_server
-                .consume(result.as_slice())
-                .await
-                .unwrap();
+            command_service_server.run().await.unwrap();
         });
 
         let command_channel = TokioOutboundChannel::new(command_sender);
