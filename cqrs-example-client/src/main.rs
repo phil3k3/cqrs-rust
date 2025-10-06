@@ -109,7 +109,6 @@ async fn main() -> io::Result<()> {
             .get_string("service_subscriptions")
             .unwrap();
         let topics = subscriptions_list.split(",").collect::<Vec<&str>>();
-        let arc = Arc::new(event_listener);
         let transaction_handler = cqrs_kafka::traits::NoopTransactionHandler::default();
         let kafka_event_listener_channel = StreamKafkaInboundChannel::new(
             &settings_event_listener.get_string("service_id").unwrap(),
@@ -117,7 +116,7 @@ async fn main() -> io::Result<()> {
             &settings_event_listener
                 .get_string("bootstrap_server")
                 .unwrap(),
-            arc,
+            Arc::new(event_listener),
             &transaction_handler,
             false,
         )
@@ -147,7 +146,7 @@ async fn main() -> io::Result<()> {
     let client_for_task = Arc::clone(&command_service_client);
     let settings_command_listener = settings.clone();
     tokio::spawn(async move {
-        let command_channel = StreamKafkaInboundChannel::new(
+        let command_response_channel = StreamKafkaInboundChannel::new(
             "COMMAND-CLIENT",
             &[&settings_command_listener
                 .get_string("response_topic")
@@ -161,7 +160,7 @@ async fn main() -> io::Result<()> {
         )
         .expect("Failed to create command channel");
 
-        command_channel
+        command_response_channel
             .consume_async_blocking()
             .await
             .expect("Failed to consume command channel");
