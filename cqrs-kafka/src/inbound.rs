@@ -76,6 +76,7 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
         let consumer = self.message_consumer.clone();
         self.consumer
             .stream()
+            .map_err(Error::from)
             .try_for_each(|borrowed_message| {
                 let consumer = consumer.clone();
                 async move {
@@ -85,30 +86,24 @@ impl<'a, T: MessageConsumer, H: TransactionHandler> StreamKafkaInboundChannel<'a
                         borrowed_message.partition(),
                         Offset::Offset(borrowed_message.offset() + 1),
                     )?;
-                    // this intentionally panics to make sure that the pod is crash looping on faulty message processing as we want to
-                    // ensure consistency, hence we can't skip over a message
+                    // We can't skip over a message and stay consistent, so any failure here
+                    // is propagated rather than swallowed. Whether that means crash-looping
+                    // the pod (e.g. via `.expect()`) or retrying is the caller's choice.
                     // ((( ----
-                    self.transaction_handler
-                        .begin_transaction()
-                        .expect("Could not begin transaction");
+                    self.transaction_handler.begin_transaction()?;
                     let consumer_metadata = self
                         .consumer
                         .group_metadata()
-                        .expect("Could not get consumer metadata");
+                        .ok_or(Error::MissingConsumerGroupMetadata)?;
                     if let Some(message) = borrowed_message.payload() {
-                        consumer
-                            .consume(message)
-                            .await
-                            .expect("Could not consume message");
+                        consumer.consume(message).await?;
                     }
                     self.transaction_handler
-                        .commit_transaction(&offsets, &consumer_metadata)
-                        .expect("Could not commit transaction");
+                        .commit_transaction(&offsets, &consumer_metadata)?;
                     // ))) ----
                     Ok(())
                 }
             })
             .await
-            .map_err(|e| e.into())
     }
 }

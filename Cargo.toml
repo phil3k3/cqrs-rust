@@ -4,7 +4,8 @@ members = [
     "cqrs-kafka",
     "cqrs-example-client",
     "cqrs-example-server",
-    "cqrs-messages"
+    "cqrs-messages",
+    "cqrs-performance"
 ]
 resolver = "2"
 
@@ -15,7 +16,6 @@ serde = { version = "1", features = ["derive"] }
 log = "0.4.8"
 env_logger = "0.11.8"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "time", "sync"] }
-typetag = "0.2"
 config = "0.15.15"
 rdkafka = { version = "0.38.0", features = ["cmake-build"] }
 futures = "0.3.28"

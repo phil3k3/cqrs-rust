@@ -1,0 +1,19 @@
+# CQRS Performance Testing Configuration
+
+# Kafka bootstrap server
+bootstrap_server = "localhost:9092"
+
+# Command topic for sending commands
+command_topic = "commands"
+
+# Command response topic
+command_response_topic = "command-responses"
+
+# Service ID for this performance test client
+service_id = "perf-test-client"
+
+# Optional: Event subscriptions (comma-separated topics)
+# service_subscriptions = "events"
+
+# Log level
+log_level = "info"

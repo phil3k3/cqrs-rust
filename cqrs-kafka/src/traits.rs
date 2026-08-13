@@ -16,12 +16,7 @@ pub trait TransactionHandler {
     }
 }
 
+#[derive(Default)]
 pub struct NoopTransactionHandler {}
 
 impl TransactionHandler for NoopTransactionHandler {}
-
-impl Default for NoopTransactionHandler {
-    fn default() -> Self {
-        NoopTransactionHandler {}
-    }
-}

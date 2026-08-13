@@ -3,9 +3,8 @@ use cqrs_library::cqrs::traits::OutboundChannel;
 use log::{error, info};
 use rdkafka::admin::AdminClient;
 use rdkafka::config::RDKafkaLogLevel;
-use rdkafka::producer::{BaseRecord, DeliveryResult, Producer, ProducerContext, ThreadedProducer};
+use rdkafka::producer::{BaseRecord, DeliveryResult, ProducerContext, ThreadedProducer};
 use rdkafka::{ClientConfig, ClientContext, Message};
-use std::time::Duration;
 
 pub struct KafkaOutboundChannel {
     topic: String,
@@ -94,19 +93,19 @@ impl KafkaOutboundChannel {
 }
 
 impl OutboundChannel for KafkaOutboundChannel {
-    fn send(&self, key: &[u8], message: &[u8]) {
+    fn send(&self, key: &[u8], message: &[u8]) -> cqrs_library::prelude::Result<()> {
         self.producer
             .send(
                 BaseRecord::to(self.topic.as_str())
                     .key(key)
                     .payload(message),
             )
-            .expect("Failed to send message");
-        for _ in 0..10 {
-            self.producer.poll(Duration::from_millis(100));
-        }
-        self.producer
-            .flush(Duration::from_secs(60))
-            .expect("Flush failed");
+            .map_err(|(kafka_error, _record)| {
+                Error::MessageSendFailed {
+                    topic: self.topic.clone(),
+                    message: kafka_error.to_string(),
+                }
+                .into()
+            })
     }
 }
