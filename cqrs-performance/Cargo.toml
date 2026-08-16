@@ -1,5 +1,5 @@
 [package]
-name = "cqrs-example-client"
+name = "cqrs-performance"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,13 +10,13 @@ cqrs-library = { path = "../cqrs-library" }
 cqrs-kafka = { path = "../cqrs-kafka" }
 serde = { workspace = true }
 config ={ workspace = true }
-actix-web = { workspace = true }
 
 log = { workspace = true }
 env_logger = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 
-[dev-dependencies]
-cqrs-messages = { path = "../cqrs-messages" }
-prost = { workspace = true }
+# Performance testing dependencies
+hdrhistogram = "7.5"
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"

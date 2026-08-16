@@ -2,7 +2,7 @@ use crate::inbound::StreamKafkaInboundChannel;
 use crate::outbound::{create_admin_client, create_transactional_producer, ProducerCallbackLogger};
 use async_trait::async_trait;
 use config::Config;
-use cqrs_library::cqrs::traits::{EventSender, Transport};
+use cqrs_library::cqrs::traits::{EventEnvelope, EventSender, Transport};
 use cqrs_library::cqrs::CommandServiceServer;
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::consumer::ConsumerGroupMetadata;
@@ -31,43 +31,37 @@ pub struct KafkaSettings {
     pub service_id: String,
 }
 
-impl From<Config> for KafkaSettings {
-    fn from(value: Config) -> Self {
-        Self {
-            bootstrap_server: value
-                .get_string("bootstrap_server")
-                .expect("Bootstrap server must be configured"),
-            transaction_id: value
-                .get_string("transaction_id")
-                .expect("Transaction id must be configured"),
-            events_topic: value
-                .get_string("events_topic")
-                .expect("Events topic must be configured"),
-            command_response_topic: value
-                .get_string("response_topic")
-                .expect("Command response topic must be configured"),
-            commands_topic: value
-                .get_string("command_topic")
-                .expect("Commands topic must be configured"),
-            service_id: value
-                .get_string("service_id")
-                .expect("Service id must be configured"),
-        }
+impl TryFrom<Config> for KafkaSettings {
+    type Error = Error;
+
+    fn try_from(value: Config) -> Result<Self> {
+        Ok(Self {
+            bootstrap_server: value.get_string("bootstrap_server")?,
+            transaction_id: value.get_string("transaction_id")?,
+            events_topic: value.get_string("events_topic")?,
+            command_response_topic: value.get_string("response_topic")?,
+            commands_topic: value.get_string("command_topic")?,
+            service_id: value.get_string("service_id")?,
+        })
     }
 }
 
-pub struct KafkaTransport<'a> {
-    pub kafka_settings: &'a KafkaSettings,
+pub struct KafkaTransport {
+    pub kafka_settings: Arc<KafkaSettings>,
     pub producer: ThreadedProducer<ProducerCallbackLogger>,
     pub admin_client: AdminClient<ProducerCallbackLogger>,
 }
 
-impl<'a> KafkaTransport<'a> {
-    pub fn new(kafka_settings: &'a KafkaSettings) -> Result<Self> {
+impl KafkaTransport {
+    pub fn new(kafka_settings: impl Into<Arc<KafkaSettings>>) -> Result<Self> {
+        let kafka_settings = kafka_settings.into();
         let producer = create_transactional_producer(
             kafka_settings.bootstrap_server.as_str(),
             kafka_settings.transaction_id.as_str(),
         )?;
+        producer
+            .init_transactions(Timeout::After(Duration::from_secs(30)))
+            .map_err(Error::from)?;
         let admin_client = create_admin_client(kafka_settings.bootstrap_server.as_str())?;
 
         Ok(Self {
@@ -88,7 +82,7 @@ impl<'a> KafkaTransport<'a> {
     }
 }
 
-impl<'a> EventSender for KafkaTransport<'a> {
+impl EventSender for KafkaTransport {
     fn send_event(&self, key: &[u8], event: &[u8]) -> cqrs_library::prelude::Result<()> {
         self.producer
             .send(
@@ -97,17 +91,12 @@ impl<'a> EventSender for KafkaTransport<'a> {
                     .payload(event),
             )
             .map_err(|x| Error::from(x.0))?;
-        for _ in 0..10 {
-            self.producer.poll(Duration::from_millis(100));
-        }
         Ok(())
     }
 }
 
 #[async_trait]
-impl<'a> Transport for KafkaTransport<'a> {
-    type Transport = KafkaTransport<'a>;
-
+impl Transport for KafkaTransport {
     fn send_command_response(
         &self,
         key: &[u8],
@@ -120,15 +109,12 @@ impl<'a> Transport for KafkaTransport<'a> {
                     .payload(message),
             )
             .map_err(|x| Error::from(x.0))?;
-        for _ in 0..10 {
-            self.producer.poll(Duration::from_millis(100));
-        }
         Ok(())
     }
 
-    async fn consume_async_blocking<'s>(
+    async fn consume_async_blocking<E: EventEnvelope + Send + Sync + 'static>(
         &self,
-        message_consumer: CommandServiceServer<'s, Self::Transport>,
+        message_consumer: CommandServiceServer<Self, E>,
     ) -> cqrs_library::prelude::Result<()> {
         let command_channel = StreamKafkaInboundChannel::new(
             self.kafka_settings.service_id.as_str(),
@@ -145,7 +131,7 @@ impl<'a> Transport for KafkaTransport<'a> {
     }
 }
 
-impl<'a> TransactionHandler for KafkaTransport<'a> {
+impl TransactionHandler for KafkaTransport {
     fn begin_transaction(&self) -> Result<()> {
         self.producer
             .begin_transaction()
@@ -159,7 +145,10 @@ impl<'a> TransactionHandler for KafkaTransport<'a> {
     ) -> Result<()> {
         self.producer
             .send_offsets_to_transaction(list, consumer, Timeout::After(Duration::from_secs(30)))
-            .map_err(|x| Error::from(x))
+            .map_err(Error::from)?;
+        self.producer
+            .commit_transaction(Timeout::After(Duration::from_secs(30)))
+            .map_err(Error::from)
     }
 }
 
@@ -206,7 +195,9 @@ mod tests {
         inbound_channel.consume();
 
         let sender = thread::spawn(move || {
-            outbound_channel.send("KEY".as_bytes(), "MESSAGE".as_bytes());
+            outbound_channel
+                .send("KEY".as_bytes(), "MESSAGE".as_bytes())
+                .expect("Failed to send message");
         });
 
         info!("Waiting for sender");
